@@ -198,10 +198,10 @@ def _check_models(cfg: Any) -> CheckResult:
             "模型",
             None,
             f"未下载任何模型（目录 {registry.model_dir}）",
-            "把 GGUF 放到该目录即可，例如最小的那个：\n"
+            "在管理后台「模型」页点「下载」即可（下载源默认国内可直连的镜像），\n"
+            "       也可以自己下好放进该目录，例如最小的那个：\n"
             f"       {target}\n"
-            "       下载后可在管理后台「模型」页设为默认；"
-            "中文效果建议用 qwen2.5-0.5b（约 400MB）",
+            "       下载后在该页设为默认；中文效果建议用 qwen2.5-0.5b（约 469MB）",
         )
     names = "、".join(s.id for s in ready)
     return CheckResult("模型", True, f"已就绪 {len(ready)} 个：{names}")
