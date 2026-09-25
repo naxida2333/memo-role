@@ -5,16 +5,14 @@ import android.app.AlertDialog;
 import android.app.DownloadManager;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
-import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.InputType;
 import android.view.KeyEvent;
 import android.view.View;
-import android.view.ViewGroup;
-import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
 import android.webkit.URLUtil;
 import android.webkit.ValueCallback;
@@ -26,68 +24,408 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.EditText;
-import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 /**
- * memo-role 的安卓外壳：一个 WebView + 一个「连不上时怎么修」的引导页。
+ * 应用主界面：环境状态与初始化、容器内终端、项目自带的网页界面。
  *
- * 为什么不做成自带 Python 的独立 App
- * ----------------------------------
- * Web 层依赖 fastapi + pydantic v2，后者含 Rust 编写的 pydantic-core；
- * 打包进 APK 需要为 Android 交叉编译原生扩展，成本远高于收益。因此这里
- * 走「外壳」路线：服务仍在 Termux 里跑，App 负责把它变成一个可点开的图标。
+ * <p>与旧版（纯 WebView 外壳）的区别：这里不再依赖手机上另外装 Termux，
+ * 而是由 App 自己用 proot 拉起一个 Ubuntu 容器（见 {@link Container}）。
  *
- * 三件容易踩的事，这里都处理了：
- *  1. 主页加载失败时不能只白屏 —— 要给出可照做的命令（见 showSetup）。
- *  2. 文件管理页的「上传文件」在 WebView 里默认没反应，必须实现
- *     {@link WebChromeClient#onShowFileChooser}。
- *  3. 「下载 / 导出」链接在 WebView 里默认被忽略，必须实现 DownloadListener，
- *     否则用户以为点了没反应。
+ * <p>所有容器操作都要几秒到几分钟，因此全部丢到后台线程执行，
+ * 结果通过 {@link #ui} 回主线程更新界面。
  */
 public class MainActivity extends Activity {
 
-    /** 默认地址：服务与 App 在同一台手机上时就是 127.0.0.1。 */
-    private static final String DEFAULT_BASE = "http://127.0.0.1:8000";
-    private static final String PREFS = "memo_role";
-    private static final String KEY_BASE = "base_url";
     private static final int REQ_FILE = 1001;
+    private static final String HOME_PAGE = "/";
+
+    private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final Handler ui = new Handler(Looper.getMainLooper());
+
+    private Container container;
+
+    private TextView statusPill;
+    private TextView homeStatus;
+    private TextView homeLog;
+    private TextView progressText;
+    private ProgressBar progress;
+    private Button btnSetup;
+    private Button btnStart;
+    private Button btnStop;
+    private Button btnOpenWeb;
+
+    private TextView termOut;
+    private android.widget.ScrollView termScroll;
+    private EditText termInput;
+
+    private View panelHome;
+    private View panelTerminal;
+    private View panelWeb;
 
     private WebView web;
-    private View setupPanel;
-    private TextView setupDetail;
-    private EditText input;
-    private TextView addressLabel;
+    private TextView webAddress;
     private ValueCallback<Uri[]> fileCallback;
-
-    /**
-     * 本次导航的主文档是否加载失败。
-     *
-     * 必须自己记这个状态：WebView 在加载失败时**也会**回调 onPageFinished
-     * （它把自带的错误页当作一个「加载完成」的页面），于是「显示引导页」会紧跟着
-     * 被「收起引导页」抹掉 —— 表现就是用户只看到裸的错误页，看不到我们写的
-     * 「服务要先启动」。onPageStarted 里重置，保证重试成功时能正常收起。
-     */
-    private boolean loadFailed;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        container = new Container(this);
 
+        bindViews();
+        setupWebView();
+
+        btnSetup.setOnClickListener(v -> runSetup());
+        btnStart.setOnClickListener(v -> startService());
+        btnStop.setOnClickListener(v -> stopService());
+        btnOpenWeb.setOnClickListener(v -> openWeb(HOME_PAGE));
+        findViewById(R.id.btn_settings).setOnClickListener(v -> askSettings());
+        findViewById(R.id.btn_reload).setOnClickListener(v -> web.reload());
+        findViewById(R.id.nav_home).setOnClickListener(v -> showPanel(0));
+        findViewById(R.id.nav_terminal).setOnClickListener(v -> showPanel(1));
+        findViewById(R.id.nav_web).setOnClickListener(v -> showPanel(2));
+
+        termInput.setOnEditorActionListener((v, actionId, event) -> {
+            runTerminalCommand();
+            return true;
+        });
+        findViewById(R.id.term_run).setOnClickListener(v -> runTerminalCommand());
+
+        refreshStatus();
+    }
+
+    private void bindViews() {
+        statusPill = findViewById(R.id.status_pill);
+        homeStatus = findViewById(R.id.home_status);
+        homeLog = findViewById(R.id.home_log);
+        progressText = findViewById(R.id.home_progress_text);
+        progress = findViewById(R.id.home_progress);
+        btnSetup = findViewById(R.id.btn_setup);
+        btnStart = findViewById(R.id.btn_start);
+        btnStop = findViewById(R.id.btn_stop);
+        btnOpenWeb = findViewById(R.id.btn_open_web);
+        termOut = findViewById(R.id.term_out);
+        termScroll = findViewById(R.id.term_scroll);
+        termInput = findViewById(R.id.term_input);
+        panelHome = findViewById(R.id.panel_home);
+        panelTerminal = findViewById(R.id.panel_terminal);
+        panelWeb = findViewById(R.id.panel_web);
         web = findViewById(R.id.web);
-        setupPanel = findViewById(R.id.setup);
-        setupDetail = findViewById(R.id.setup_detail);
-        input = findViewById(R.id.setup_input);
-        addressLabel = findViewById(R.id.toolbar_address);
+        webAddress = findViewById(R.id.web_address);
+    }
 
-        // 允许用桌面 Chrome 的 chrome://inspect 调试这个 WebView（手机排查很有用）
+    // ------------------------------------------------------------------
+    // 面板切换
+    // ------------------------------------------------------------------
+    private void showPanel(int index) {
+        panelHome.setVisibility(index == 0 ? View.VISIBLE : View.GONE);
+        panelTerminal.setVisibility(index == 1 ? View.VISIBLE : View.GONE);
+        panelWeb.setVisibility(index == 2 ? View.VISIBLE : View.GONE);
+    }
+
+    private void openWeb(String path) {
+        showPanel(2);
+        web.loadUrl(container.baseUrl() + path);
+    }
+
+    // ------------------------------------------------------------------
+    // 环境准备
+    // ------------------------------------------------------------------
+
+    private void runSetup() {
+        if (container.isReady()) {
+            log("环境已就绪，无需重复初始化。若要更新代码，请用「设置」里的重置。");
+            startService();
+            return;
+        }
+        btnSetup.setEnabled(false);
+        showBusy(true);
+        log("开始初始化。首次需要下载约 30 MB 容器 + 安装 Python 依赖，请保持联网。");
+
+        worker.execute(() -> {
+            try {
+                step("安装 proot 运行时", () -> {
+                    if (!container.isRuntimeInstalled()) {
+                        container.installRuntime();
+                    }
+                });
+
+                step("下载 Ubuntu 容器", () -> {
+                    if (!container.isRootfsReady()) {
+                        container.downloadRootfs(containerProgress());
+                    }
+                });
+
+                step("解压容器", () -> {
+                    if (!container.isRootfsReady()) {
+                        container.extractRootfs(containerProgress());
+                    }
+                });
+
+                step("写入网络与软件源配置", () -> {
+                    container.writeResolvConf();
+                    container.ensureAptSources();
+                });
+
+                step("从 GitHub 拉取项目代码", () -> container.fetchProject(containerProgress()));
+
+                step("在容器内安装 Python 依赖", () -> container.runBootstrap(line -> log(line)));
+
+                log("初始化完成。");
+                ui.post(() -> {
+                    refreshStatus();
+                    startService();
+                });
+            } catch (Exception e) {
+                log("初始化失败：" + e.getMessage());
+                log("可在「终端」页手动排查，例如执行：proot 已由应用内置，容器路径见设置。");
+                ui.post(() -> {
+                    btnSetup.setEnabled(true);
+                    showBusy(false);
+                });
+            }
+        });
+    }
+
+    /** 一个可抛出异常、需要日志的步骤。 */
+    private interface Step {
+        void run() throws Exception;
+    }
+
+    private void step(String title, Step body) throws Exception {
+        log("==> " + title);
+        body.run();
+    }
+
+    private Container.Progress containerProgress() {
+        return (what, done, total) -> {
+            String text = what + "：" + human(done) + (total > 0 ? " / " + human(total) : "");
+            ui.post(() -> {
+                progressText.setText(text);
+                if (total > 0) {
+                    progress.setIndeterminate(false);
+                    progress.setMax(1000);
+                    progress.setProgress((int) (done * 1000 / total));
+                } else {
+                    progress.setIndeterminate(true);
+                }
+            });
+        };
+    }
+
+    private void showBusy(boolean busy) {
+        progress.setVisibility(busy ? View.VISIBLE : View.GONE);
+        progressText.setVisibility(busy || !progressText.getText().toString().isEmpty()
+                ? View.VISIBLE : View.GONE);
+        if (busy) {
+            progress.setIndeterminate(true);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 服务启停
+    // ------------------------------------------------------------------
+
+    private void startService() {
+        if (!container.isReady()) {
+            log("环境还没准备好，请先点「一键初始化」。");
+            return;
+        }
+        if (container.isServiceRunning()) {
+            openWeb(HOME_PAGE);
+            return;
+        }
+        btnStart.setEnabled(false);
+        log("启动服务…");
+        worker.execute(() -> {
+            try {
+                container.startService(line -> log(line));
+                boolean up = container.waitForService(120000, line -> log(line), container.port());
+                if (up) {
+                    log("服务已就绪：" + container.baseUrl());
+                    ui.post(() -> {
+                        refreshStatus();
+                        openWeb(HOME_PAGE);
+                    });
+                } else {
+                    log("服务启动超时。请看「终端」页或管理后台的日志。");
+                    ui.post(() -> {
+                        refreshStatus();
+                        btnStart.setEnabled(true);
+                    });
+                }
+            } catch (Exception e) {
+                log("启动失败：" + e.getMessage());
+                ui.post(() -> {
+                    refreshStatus();
+                    btnStart.setEnabled(true);
+                });
+            }
+        });
+    }
+
+    private void stopService() {
+        worker.execute(() -> {
+            container.stopService();
+            log("服务已停止。");
+            ui.post(this::refreshStatus);
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // 终端
+    // ------------------------------------------------------------------
+
+    private void runTerminalCommand() {
+        String cmd = termInput.getText().toString().trim();
+        if (cmd.isEmpty()) {
+            return;
+        }
+        termInput.setText("");
+        appendTerm("$ " + cmd + "\n");
+
+        if (!container.isRootfsReady()) {
+            appendTerm("容器还没装好，先在「首页」点一键初始化。\n\n");
+            return;
+        }
+        worker.execute(() -> {
+            String out = container.exec(cmd, 60000);
+            appendTerm(out.endsWith("\n") || out.isEmpty() ? out + "\n" : out + "\n\n");
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // 设置
+    // ------------------------------------------------------------------
+
+    private void askSettings() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(16);
+        box.setPadding(pad, pad / 2, pad, 0);
+
+        TextView portLabel = new TextView(this);
+        portLabel.setText(R.string.settings_port);
+        box.addView(portLabel);
+
+        final EditText portInput = new EditText(this);
+        portInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        portInput.setText(String.valueOf(container.port()));
+        box.addView(portInput);
+
+        TextView repoLabel = new TextView(this);
+        repoLabel.setText(R.string.settings_repo);
+        repoLabel.setPadding(0, pad / 2, 0, 0);
+        box.addView(repoLabel);
+
+        final EditText repoInput = new EditText(this);
+        repoInput.setInputType(InputType.TYPE_TEXT_VARIATION_URI);
+        repoInput.setText(container.repoUrl());
+        box.addView(repoInput);
+
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.settings_title)
+                .setView(box)
+                .setPositiveButton(R.string.action_save, (d, w) -> {
+                    try {
+                        int p = Integer.parseInt(portInput.getText().toString().trim());
+                        if (p < 1 || p > 65535) {
+                            throw new NumberFormatException("端口超范围");
+                        }
+                        container.setPort(p);
+                    } catch (NumberFormatException e) {
+                        toast("端口不合法，仍用 " + container.port());
+                    }
+                    container.setRepoUrl(repoInput.getText().toString().trim());
+                    refreshStatus();
+                    toast("已保存。改动在下次启动服务时生效。");
+                })
+                .setNeutralButton(R.string.action_reset, (d, w) -> confirmReset())
+                .setNegativeButton(R.string.action_cancel, null)
+                .show();
+    }
+
+    private void confirmReset() {
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.action_reset)
+                .setMessage(R.string.reset_confirm)
+                .setPositiveButton(R.string.action_confirm, (d, w) -> worker.execute(() -> {
+                    container.stopService();
+                    Container.deleteRecursively(container.getRootfs());
+                    ui.post(() -> {
+                        log("已清空容器。请重新点「一键初始化」。");
+                        refreshStatus();
+                    });
+                }))
+                .setNegativeButton(R.string.action_cancel, null)
+                .show();
+    }
+
+    // ------------------------------------------------------------------
+    // 状态展示
+    // ------------------------------------------------------------------
+
+    private void refreshStatus() {
+        ui.post(() -> {
+            homeStatus.setText(container.statusSummary());
+            if (container.isServiceRunning()) {
+                statusPill.setText(getString(R.string.status_running, container.port()));
+            } else if (container.isReady()) {
+                statusPill.setText(R.string.status_ready);
+            } else {
+                statusPill.setText(R.string.status_not_ready);
+            }
+            btnSetup.setEnabled(!container.isReady());
+            btnStart.setEnabled(container.isReady() && !container.isServiceRunning());
+            btnStop.setEnabled(container.isServiceRunning());
+            btnOpenWeb.setEnabled(container.isServiceRunning());
+            webAddress.setText(container.baseUrl());
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // 日志
+    // ------------------------------------------------------------------
+
+    private void log(String line) {
+        ui.post(() -> {
+            String old = homeLog.getText().toString();
+            String next = old.isEmpty() ? line : old + "\n" + line;
+            // 只留最后 400 行，否则初始化日志会把界面撑爆
+            String[] lines = next.split("\n");
+            if (lines.length > 400) {
+                StringBuilder sb = new StringBuilder();
+                for (int i = lines.length - 400; i < lines.length; i++) {
+                    sb.append(lines[i]).append('\n');
+                }
+                next = sb.toString();
+            }
+            homeLog.setText(next);
+        });
+    }
+
+    private void appendTerm(String text) {
+        ui.post(() -> {
+            termOut.append(text);
+            termScroll.post(() -> termScroll.fullScroll(View.FOCUS_DOWN));
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // WebView（项目自带的网页界面）
+    // ------------------------------------------------------------------
+
+    private void setupWebView() {
         WebView.setWebContentsDebuggingEnabled(true);
-
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
-        // 聊天页用 localStorage 记住上次会话，关掉这个会「每次都从零开始」
         s.setDomStorageEnabled(true);
         s.setLoadWithOverviewMode(true);
         s.setUseWideViewPort(true);
@@ -96,26 +434,10 @@ public class MainActivity extends Activity {
 
         web.setWebViewClient(new WebViewClient() {
             @Override
-            public void onPageStarted(WebView view, String url, Bitmap favicon) {
-                // 新一轮导航开始：先清掉上一轮的失败标记，否则失败一次后再也收不起引导页
-                loadFailed = false;
-            }
-
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                // 失败时不能收：这个回调在错误页上同样会触发（详见 loadFailed 的说明）
-                if (!loadFailed) {
-                    hideSetup();
-                }
-                updateAddressLabel(url);
-            }
-
-            @Override
             public void onReceivedError(WebView view, WebResourceRequest request,
                                         WebResourceError error) {
                 if (request != null && request.isForMainFrame()) {
-                    loadFailed = true;
-                    showSetup(getString(R.string.err_unreachable, baseUrl(), describe(error)));
+                    toast(getString(R.string.web_failed, String.valueOf(error.getDescription())));
                 }
             }
         });
@@ -124,7 +446,6 @@ public class MainActivity extends Activity {
             @Override
             public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback,
                                              FileChooserParams params) {
-                // 文件管理页的「上传文件」按钮会走到这里
                 if (fileCallback != null) {
                     fileCallback.onReceiveValue(null);
                 }
@@ -147,7 +468,6 @@ public class MainActivity extends Activity {
             @Override
             public void onDownloadStart(String url, String userAgent, String disposition,
                                         String mime, long size) {
-                // 交给系统下载器，落到「下载」目录；WebView 自己不会处理这个链接
                 try {
                     String name = URLUtil.guessFileName(url, disposition, mime);
                     DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
@@ -166,122 +486,12 @@ public class MainActivity extends Activity {
                 }
             }
         });
-
-        ((Button) findViewById(R.id.btn_refresh)).setOnClickListener(v -> reload());
-        ((Button) findViewById(R.id.btn_settings)).setOnClickListener(v -> askAddress());
-        ((Button) findViewById(R.id.setup_connect)).setOnClickListener(v -> connect());
-
-        String saved = prefs().getString(KEY_BASE, DEFAULT_BASE);
-        input.setText(saved);
-        addressLabel.setText(saved);
-        web.loadUrl(saved);
-    }
-
-    // ------------------------------------------------------------------
-    // 引导页 / 地址
-    // ------------------------------------------------------------------
-    private void connect() {
-        String url = normalize(input.getText().toString());
-        if (url.isEmpty()) {
-            toast(getString(R.string.err_empty_address));
-            return;
-        }
-        prefs().edit().putString(KEY_BASE, url).apply();
-        input.setText(url);
-        addressLabel.setText(url);
-        setupDetail.setText("");
-        web.loadUrl(url);
-    }
-
-    private void reload() {
-        String saved = prefs().getString(KEY_BASE, DEFAULT_BASE);
-        web.loadUrl(saved);
-    }
-
-    /** 允许用户只填 192.168.1.5:8000 这种写法，自动补上 http:// 与去掉结尾斜杠。 */
-    static String normalize(String raw) {
-        String url = raw == null ? "" : raw.trim();
-        if (url.isEmpty()) {
-            return "";
-        }
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            url = "http://" + url;
-        }
-        while (url.endsWith("/")) {
-            url = url.substring(0, url.length() - 1);
-        }
-        return url;
-    }
-
-    private void showSetup(String detail) {
-        setupDetail.setText(detail);
-        setupPanel.setVisibility(View.VISIBLE);
-        web.setVisibility(View.INVISIBLE);
-    }
-
-    private void hideSetup() {
-        setupPanel.setVisibility(View.GONE);
-        web.setVisibility(View.VISIBLE);
-    }
-
-    private void updateAddressLabel(String url) {
-        if (url == null) {
-            return;
-        }
-        String saved = prefs().getString(KEY_BASE, DEFAULT_BASE);
-        if (url.startsWith(saved)) {
-            addressLabel.setText(saved);
-        } else {
-            addressLabel.setText(Uri.parse(url).getHost());
-        }
-    }
-
-    /** 改地址：用系统对话框，省得为了一个输入框再写一个页面。 */
-    private void askAddress() {
-        final EditText edit = new EditText(this);
-        edit.setInputType(InputType.TYPE_TEXT_VARIATION_URI);
-        edit.setText(prefs().getString(KEY_BASE, DEFAULT_BASE));
-        edit.setSelectAllOnFocus(true);
-        int pad = (int) (16 * getResources().getDisplayMetrics().density);
-        FrameLayout wrap = new FrameLayout(this);
-        wrap.setPadding(pad, pad / 2, pad, 0);
-        wrap.addView(edit, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        new AlertDialog.Builder(this)
-                .setTitle(R.string.settings_title)
-                .setView(wrap)
-                .setPositiveButton(R.string.action_connect, (d, w) -> {
-                    input.setText(edit.getText());
-                    connect();
-                })
-                .setNegativeButton(R.string.action_cancel, null)
-                .show();
-    }
-
-    // ------------------------------------------------------------------
-    // 返回键 / 文件选择回调
-    // ------------------------------------------------------------------
-    @Override
-    public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_BACK) {
-            if (setupPanel.getVisibility() == View.VISIBLE) {
-                finish();
-                return true;
-            }
-            if (web.canGoBack()) {
-                web.goBack();
-                return true;
-            }
-        }
-        return super.onKeyDown(keyCode, event);
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         if (requestCode == REQ_FILE) {
             if (fileCallback != null) {
-                // 统一交给框架解析：多选、不同 provider 返回的 Uri 结构都由它兜住
                 fileCallback.onReceiveValue(
                         WebChromeClient.FileChooserParams.parseResult(resultCode, data));
                 fileCallback = null;
@@ -291,25 +501,48 @@ public class MainActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
     }
 
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            if (panelWeb.getVisibility() == View.VISIBLE && web.canGoBack()) {
+                web.goBack();
+                return true;
+            }
+            if (panelWeb.getVisibility() == View.VISIBLE) {
+                showPanel(0);
+                return true;
+            }
+        }
+        return super.onKeyDown(keyCode, event);
+    }
+
+    @Override
+    protected void onDestroy() {
+        // 刻意不停服务：切出去就断连，聊天机器人没法用。
+        // 服务的生命周期与 App 进程一致。
+        worker.shutdown();
+        super.onDestroy();
+    }
+
     // ------------------------------------------------------------------
     // 杂项
     // ------------------------------------------------------------------
-    private SharedPreferences prefs() {
-        return getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-    }
 
-    private String baseUrl() {
-        return prefs().getString(KEY_BASE, DEFAULT_BASE);
-    }
-
-    private static String describe(WebResourceError error) {
-        if (error == null) {
-            return "";
-        }
-        return error.getDescription() + " (" + error.getErrorCode() + ")";
+    private int dp(int value) {
+        return (int) (value * getResources().getDisplayMetrics().density);
     }
 
     private void toast(String text) {
         Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+    }
+
+    private static String human(long bytes) {
+        if (bytes < 1024) {
+            return bytes + " B";
+        }
+        if (bytes < 1024 * 1024) {
+            return String.format(java.util.Locale.US, "%.0f KB", bytes / 1024.0);
+        }
+        return String.format(java.util.Locale.US, "%.1f MB", bytes / 1024.0 / 1024.0);
     }
 }

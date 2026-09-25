@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 构建 memo-role 安卓外壳的 APK。
+# 构建 memo-role 安卓客户端（原生界面 + 内置 Linux 容器）的 APK。
 #
 # 为什么不用 Gradle
 # ----------------
@@ -22,7 +22,13 @@ SDK="${SDK:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/opt/android-sdk}}}"
 BUILD_TOOLS="${BUILD_TOOLS:-34.0.0}"
 PLATFORM="${PLATFORM:-android-34}"
 MIN_SDK="${MIN_SDK:-24}"
-TARGET_SDK="${TARGET_SDK:-34}"
+# targetSdk 必须停在 28：Android 10（API 29）起禁止「从应用可写主目录执行文件」
+# （W^X）。容器里的 bash / python3 都位于应用数据目录，一旦 targetSdk ≥ 29 就会
+# 全部无法 exec。Termux 与 UserLAnd 至今保持 28 也是这个原因。
+#
+# 代价：无法上架 Google Play（那里要求更高的 targetSdk），只能侧载安装；
+# 但 Android 只拒绝 targetSdk < 23 的应用，28 在 Android 14/15 上可正常安装。
+TARGET_SDK="${TARGET_SDK:-28}"
 VERSION_CODE="${VERSION_CODE:-1}"
 VERSION_NAME="${VERSION_NAME:-0.1.0}"
 JAVA_RELEASE="${JAVA_RELEASE:-11}"
@@ -86,10 +92,13 @@ echo "==> 1/7 编译资源（aapt2 compile）"
 "$BT/aapt2" compile --dir res -o "$BUILD/res.zip"
 
 echo "==> 2/7 链接资源与清单（aapt2 link）"
+# -A 把 assets/ 打进 APK：容器引导脚本与 proot 运行时都在里面，
+# App 首次运行时再把它们复制到应用私有目录（见 Container.java）。
 "$BT/aapt2" link \
   -o "$BUILD/base.apk" \
   -I "$AJAR" \
   --manifest AndroidManifest.xml \
+  -A assets \
   --java "$BUILD/gen" \
   --min-sdk-version "$MIN_SDK" \
   --target-sdk-version "$TARGET_SDK" \

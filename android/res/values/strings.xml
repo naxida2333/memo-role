@@ -2,33 +2,47 @@
 <resources>
     <string name="app_name">memo-role</string>
 
-    <string name="action_refresh">刷新</string>
+    <!-- 顶栏状态 -->
+    <string name="status_checking">检查环境…</string>
+    <string name="status_not_ready">未初始化</string>
+    <string name="status_ready">已就绪</string>
+    <string name="status_running">运行中 · 端口 %1$d</string>
+
+    <!-- 通用动作 -->
     <string name="action_settings">设置</string>
-    <string name="action_connect">连接</string>
+    <string name="action_setup">一键初始化（下载容器并安装依赖）</string>
+    <string name="action_start">启动服务</string>
+    <string name="action_stop">停止服务</string>
+    <string name="action_open_web">打开界面</string>
+    <string name="action_refresh">刷新</string>
+    <string name="action_run">执行</string>
+    <string name="action_save">保存</string>
+    <string name="action_reset">重置</string>
     <string name="action_cancel">取消</string>
-    <string name="settings_title">服务地址</string>
+    <string name="action_confirm">确定</string>
 
-    <string name="setup_title">连接不上 memo-role 服务</string>
-    <string name="setup_hint">这个 App 只是界面外壳，不含 Python 与模型 —— 服务需要单独启动。两种方式：</string>
-    <string name="setup_commands">方式一 · 在电脑上跑（最省事）
-  pip install -r requirements.txt
-  python -m memo_role --host 0.0.0.0
-  上面的地址改成电脑的局域网 IP
+    <!-- 首页 -->
+    <string name="home_log_title">执行日志</string>
 
-方式二 · 在同一台手机上跑（Termux）
-  pkg install proot-distro
-  proot-distro install ubuntu
-  proot-distro login ubuntu
-  进入 Ubuntu 后，在项目目录里：
-  apt update; apt install -y python3-pip
-  pip install -r requirements.txt
-  python -m memo_role</string>
-    <string name="setup_address_label">服务地址</string>
-    <string name="setup_address_hint">http://127.0.0.1:8000</string>
-    <string name="setup_note">为什么手机端要绕这一下：pydantic-core 只有 glibc 版安装包，Termux 用的是 Bionic，直接 pip install 会卡在编译它 —— 所以走 proot 里的 Ubuntu。\n服务与 App 在同一台手机上时地址填 127.0.0.1（这样也不会把文件管理页暴露到局域网）；跑在电脑上时填那台电脑的 IP（如 192.168.1.5:8000）。\n完整步骤见项目的 README「安卓 App」一节。</string>
+    <!-- 终端 -->
+    <string name="terminal_hint">这里是在容器（Ubuntu）里执行命令，可用来排查问题。不是完整终端：不支持 vi 这类交互式程序。</string>
+    <string name="terminal_placeholder">例如：python3 -V</string>
 
-    <string name="err_unreachable">连不上 %1$s\n%2$s</string>
-    <string name="err_empty_address">地址不能为空</string>
+    <!-- 底部导航 -->
+    <string name="nav_home">首页</string>
+    <string name="nav_terminal">终端</string>
+    <string name="nav_web">界面</string>
+
+    <!-- 设置 -->
+    <string name="settings_title">设置</string>
+    <string name="settings_port">服务端口</string>
+    <string name="settings_repo">代码来源（GitHub tarball 地址）</string>
+    <string name="reset_confirm">将删除已下载的容器与项目代码（模型与数据若在容器内也会一并删除）。确定继续？</string>
+
+    <!-- 网页面板 -->
+    <string name="web_failed">页面加载失败：%1$s</string>
+
+    <!-- WebView 文件选择 / 下载 -->
     <string name="pick_file">选择文件</string>
     <string name="pick_file_failed">打开文件选择器失败：%1$s</string>
     <string name="downloading">正在下载 %1$s</string>

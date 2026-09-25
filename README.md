@@ -93,58 +93,57 @@ python -m memo_role --reload             # 开发用热重载
 浏览器打开 `http://<设备IP>:8000`（本机则 `http://127.0.0.1:8000`）：
 `/` 对话页、`/admin` 管理后台、`/files` 文件管理。
 
-## 安卓 App（可选外壳）
+## 安卓 App（原生界面 + 内置 Linux 容器）
 
-`android/` 目录里是一个可安装的 APK：**把网页界面装进一个应用图标里**，
-省掉「打开浏览器输地址」，并补齐了网页在 WebView 下默认会坏的两件事 ——
-文件管理页的**上传**与**下载**（不实现的话点了没反应）。
+`android/` 里是一个可安装的 APK，**自带一个 Linux 容器**：APK 内置 proot 运行时，
+首次启动时下载 Ubuntu 官方 arm64 base rootfs 并解压到应用私有目录，再在容器里
+安装 Python 依赖、从 GitHub 拉取项目代码，最后启动服务。
 
-**它不是「自带 Python 的独立 App」**：Python 服务与模型需要**单独运行**，APK 只是客户端。
-之所以不做成独立 App：Web 层依赖 fastapi + pydantic v2，后者含 Rust 编写的
-`pydantic-core`，要为安卓交叉编译原生扩展，成本远高于收益。
+**装一个 APK 就能用** —— 不需要 Termux，也不需要另一台电脑。
 
-### 使用：服务跑在哪台机器上？
+### 界面
 
-**方式一 · 服务跑在电脑上（最省事，也最容易排查）**
+| 页面 | 内容 |
+| --- | --- |
+| 首页 | 环境状态、一键初始化（带下载/解压进度与执行日志）、启动 / 停止服务 |
+| 终端 | 在容器内执行命令，用于排障（不是完整终端，不支持 `vi` 这类交互式程序） |
+| 界面 | 项目自带的网页界面：对话页 / 管理后台 / 文件管理 |
 
-1. 电脑上启动服务，加 `--host 0.0.0.0` 让手机能连进来：
-   ```bash
-   pip install -r requirements.txt
-   python -m memo_role --host 0.0.0.0
-   ```
-2. 查电脑的局域网 IP，在 App 的「设置」里填 `192.168.1.5:8000` 这样的地址。
-3. 电脑防火墙需允许 Python 通过专用网络，否则手机会一直连不上。
+### 首次启动会发生什么
 
-**方式二 · 服务与 App 在同一台手机上**
+点「一键初始化」后依次进行，全程需要联网：
 
-⚠️ 这里有个坑：**直接在 Termux 里 `pip install -r requirements.txt` 会失败**。
-`pydantic-core` 只发布 glibc（manylinux / musllinux）版本的安装包，而 Termux 用的是
-Bionic libc，pip 找不到匹配的轮子，会转去从源码编译 Rust 扩展 —— 慢，且经常编不过。
+1. 安装内置的 proot 运行时（约 290 KB，瞬间完成）
+2. 下载 Ubuntu base rootfs（约 30 MB）
+3. 解压（约 3400 个文件，含 194 个符号链接）
+4. 写入 DNS 与软件源配置
+5. 从 GitHub 拉取项目代码（走 tarball，省掉在容器里装 git）
+6. 容器内 `apt install python3-pip` + `pip install -r requirements.txt`（约 150 MB）
 
-所以要在 **proot 里的 Ubuntu**（真正的 glibc 环境）中运行：
+建议留出 2 GB 以上存储空间（容器 + 依赖 + 后续模型）。
 
-```bash
-# 在 Termux 里
-pkg install proot-distro
-proot-distro install ubuntu
-proot-distro login ubuntu
+### 为什么 targetSdk 停在 28
 
-# 以下在 Ubuntu 里执行（Termux 的家目录被绑定在同一路径）
-cd /data/data/com.termux/files/home/memo-role
-apt update; apt install -y python3-pip
-pip install -r requirements.txt
-python -m memo_role          # 不需要 --host 0.0.0.0
-```
+Android 10（API 29）起禁止「从可写应用主目录执行文件」（W^X）：以 API 29+
+为目标的不可信应用无法对应用主目录中的文件调用 `execve()`。而容器里的 `bash`、
+`python3` 恰好都在应用数据目录下，targetSdk 一旦 ≥ 29 就全部执行不了。
+Termux 与 UserLAnd 至今保持 28 也是这个原因。
 
-App 默认就连 `http://127.0.0.1:8000`。不加 `--host` 也就不会把文件管理页暴露到局域网。
+代价是**无法上架 Google Play**（那里要求更高的 targetSdk），只能侧载安装；
+Android 本身只拒绝 targetSdk < 23 的应用，28 在 Android 14/15 上可正常安装。
 
-> 真机上的内存与首字延迟还没有实测数据；跑真实模型时 `llama-server` 需要
-> llama.cpp 的安卓构建版本，或在 proot 里自行编译。
+### 已知限制
 
-### 安装 APK
+- **服务随 App 进程存活**：App 被系统回收后服务会随之停止（前台服务保活尚未做）。
+- **推理后端尚未集成**：容器里目前只有 Python 依赖，没有 LLM 推理后端。
+  真实聊天需要 llama.cpp 的安卓可用版本（aarch64 `llama-server`），
+  或改用 `openai_api` 后端。界面 / 指令 / 人设 / 记忆 / 文件 / 管理后台不依赖它。
+- **未在真机上验证过**：见下方「测试状态」。
 
-拷到手机点击安装（需允许「安装未知来源应用」），或 `adb install -r android/dist/memo-role-0.1.1.apk`。
-连不上服务时会显示引导页，上面直接写着上面这些命令。
+### 安装
+
+拷到手机点击安装（需允许「安装未知来源应用」），或
+`adb install -r android/dist/memo-role-0.2.0.apk`。
 
 ### 重新构建
 
@@ -157,6 +156,12 @@ SDK=/path/to/android-sdk ./build.sh     # 需要 SDK 的 build-tools + platforms
 不用 Gradle：这个 App 只用 Android 框架自带类（无 AndroidX、无第三方库），
 跳开 Gradle 能少下载几百 MB 依赖，也避开 AGP 与 JDK 版本匹配的坑。
 
+### 内置的第三方二进制
+
+`android/assets/proot/` 里的 `proot` 与两个 `.so` 取自 Termux 官方仓库，
+许可以及上游源码地址见该目录下的 `NOTICE.md`。它们不是本项目的代码，
+随 APK 分发是为了让 App 能自己拉起容器。
+
 > 注意：`build.sh` 会主动挑一个 JDK 11~17 —— build-tools 34 自带的 d8 在
 > JDK 21+ 上会直接抛空指针。首次构建还会生成一把自签名调试密钥（不纳入版本管理）。
 
@@ -164,12 +169,27 @@ SDK=/path/to/android-sdk ./build.sh     # 需要 SDK 的 build-tools + platforms
 
 分两轮，第一轮不需要模型 —— 环境没配好也能先把界面与业务逻辑测完。
 
-### 第一轮：不装模型（约 10 分钟）
+### 第一轮 · 安卓 App（0.2.0 的重点，只在这一台设备上完成）
+
+| # | 步骤 | 预期 |
+| --- | --- | --- |
+| 1 | 安装 APK 并打开 | 顶栏显示「未初始化」；首页三项状态均为未就绪 |
+| 2 | 点「一键初始化」，中途盯着日志 | 日志逐行滚动；下载与解压阶段进度条前进；界面不假死 |
+| 3 | 等待结束（首次几分钟） | 日志出现「初始化完成」，随后自动跳到「界面」页并显示对话页 |
+| 4 | 看顶栏 | 显示「运行中 · 端口 8000」 |
+| 5 | 切到「终端」，执行 `python3 -V` | 打印 Python 版本 |
+| 6 | 终端执行 `ls /root/memo-role` | 列出项目文件（说明代码已从 GitHub 拉进容器） |
+| 7 | 首页点「停止服务」再「启动服务」 | 状态来回切换；重启后「界面」页仍能打开对话页 |
+| 8 | 界面页测「对话页 / 管理后台 / 文件管理」 | 与浏览器里一致；文件管理页可用（上传/下载已适配 WebView） |
+
+失败时的反馈方式：**首页那一整块日志可以长按复制**，连同卡住的那一步一起发出来即可。
+
+### 第一轮 · 浏览器 / 电脑（不装模型）
 
 | # | 步骤 | 预期 |
 | --- | --- | --- |
 | 1 | `python -m memo_role --check` | 报告能看懂；「模型」「推理后端」可能失败，其余应为 OK |
-| 2 | 手机浏览器打开 `http://127.0.0.1:8000`（装了 APK 就直接打开 App） | 三个页面都能打开；App 会自动连 127.0.0.1:8000 |
+| 2 | 浏览器打开 `http://127.0.0.1:8000` | 三个页面都能打开 |
 | 3 | 点「＋ 新建会话」 | 侧栏出现会话，输入框可用，顶栏显示人设 / 模型徽标 |
 | 4 | 点下方指令按钮 `/help` | 气泡列出全部指令，且**没有**卡顿（指令不进推理） |
 | 5 | 发 `/persona list`、`/model list`、`/status` | 分别列出人设、模型、当前状态 |
@@ -181,7 +201,7 @@ SDK=/path/to/android-sdk ./build.sh     # 需要 SDK 的 build-tools + platforms
 | 11 | 在 `/admin` 人设页新建一个人设并保存 | 卡片出现；回到 `/` 的下拉里能选到它 |
 | 12 | 打开 `/files`，进入目录、编辑并保存一个文本文件 | 保存成功、内容回显；受保护文件（数据库）不可编辑 |
 | 13 | 在 `/files` 新建一个文件，写入内容保存 | 列表出现该文件；再删除它 |
-| 14 | 装了 APK 的话：在 App 里点「上传文件」挑一张图片 | 能弹出系统文件选择器并上传成功（WebView 需额外实现，容易坏） |
+| 14 | 在 `/files` 点「上传文件」挑一张图片 | 弹出系统文件选择器并上传成功（WebView 下需额外实现，容易坏） |
 
 ### 第二轮：真实模型（聊天链路）
 
@@ -226,11 +246,24 @@ SDK=/path/to/android-sdk ./build.sh     # 需要 SDK 的 build-tools + platforms
 | M9 | 命令行入口 | `python -m memo_role` 启动服务，支持 `--host` / `--port` / `--config` / `--root` / `--reload` / `--check` | `memo_role/__main__.py` |
 | M10 | 自检与就绪提示 | 启动自检报告（依赖 / 目录 / 模型 / 后端 / 端口）、对话页缺少模型时的前置提示、后端自动拉起修复 | `memo_role/selfcheck.py`、`inference/llama_server.py` |
 | M11 | 安卓外壳 APK | 可安装的 WebView 客户端：地址可配、连不上给引导页、补齐文件上传与下载、图标与构建脚本（不依赖 Gradle） | `android/` |
+| M12 | 安卓容器客户端 | 自带 proot 运行时：首次启动下载并解压 Ubuntu rootfs、容器内装依赖、从 GitHub 拉代码、启动服务；原生界面（首页 / 终端 / 界面）+ 日志与进度 | `android/src/`、`android/assets/` |
 
 测试：`python -m pytest`（499 项，全离线运行，不触碰真实推理与网络）。
-安卓侧另做两项离线校验：APK 结构/签名（`apksigner verify` + `aapt2 dump badging`）
-与地址解析函数（桌面 JVM 跑 `MainActivity.normalize`）。**APK 未在真机或模拟器上运行过** ——
-本环境没有 KVM，跑不了模拟器。
+
+安卓侧的离线校验（真机之外的尽调，逐条有据）：
+
+| 校验项 | 方法 | 结论 |
+| --- | --- | --- |
+| APK 结构与签名 | `apksigner verify` + `aapt2 dump badging` | v2+v3 签名通过；targetSdk 为 28 |
+| 包内 proot 未被损坏 | 解出 assets 里的 proot 与源 deb 比对 MD5 | 一致（`e8b9fd8b…`） |
+| proot 能否脱离 Termux 运行 | `readelf` 查 ELF 解释器与依赖 | 解释器是系统 `/system/bin/linker64`，仅依赖两个已随包分发的 `.so` |
+| proot 是否支持安卓必需选项 | 二进制字符串 + 包元数据 | 支持 `--link2symlink` / `--kill-on-exit` |
+| 依赖能否免编译安装 | `pip download --platform manylinux2014_aarch64` | 全部 30 个包均有 aarch64 现成轮子（含 `pydantic-core`） |
+| rootfs 结构是否被解压器覆盖 | 用 `tarfile` 解析真实 Ubuntu 包 | 3413 条目，typeflag 仅 0/1/2/5，无 pax 头；usrmerge（`bin` 是指向 `usr/bin` 的符号链接）已适配 |
+| 代码拉取路径是否正确 | 解析 GitHub tarball 顶层 | 单一顶层目录 `memo-role-main`，与 `fetchProject` 的假设一致 |
+
+**APK 仍未在真机或模拟器上运行过** —— 本环境没有 KVM，跑不了模拟器；
+上面这些只能证明「材料齐备且自洽」，不能证明在具体设备上能跑通。
 
 ### 后续任务
 
@@ -239,23 +272,26 @@ SDK=/path/to/android-sdk ./build.sh     # 需要 SDK 的 build-tools + platforms
 **P0 — 真实链路尚未跑通（当前全部验证都在假后端上完成）**
 
 1. **真实模型端到端**：环境已具备自检与明确报错（M10），但**尚未在真机上跑过一次真实推理**。下载 GGUF + 准备 llama-server 后按 README「人工测试流程 · 第二轮」走一遍。落点：`inference/`（后端是否有 bug）+ `web/static/app.js`（SSE 展示）。
-2. **安卓 / 低配实测**：Termux（PRoot）里装依赖跑起来，记录内存峰值与首字延迟，据此回调 `inference.n_threads`、`n_ctx`。落点：`config.example.yaml` 默认值 + README。
-3. **NapCat 联调**：`napcat.enabled: true` 后真实收发 QQ 消息，验证 @ 识别、群里 `/persona` 切换绑定、群聊标签前缀。落点：`adapters/napcat.py`。
+2. **安卓容器客户端首次真机验证**：M12 的所有材料都验过、代码也编译通过，但**从未在任何设备上运行**。按「人工测试流程 · 第一轮 · 安卓 App」逐条走。落点：`android/src/`（proot 调用、解压、网络）。
+3. **安卓上的推理后端**：容器是 glibc 的 Ubuntu，需要 aarch64 的 `llama-server`。两条路可选 —— 交叉编译一份 glibc 版随 APK 分发，或在容器内 `apt build-essential cmake` 后就地编译（慢，但不需要额外的构建环境）。落点：`android/assets/` + `Container.java` 的启动逻辑。
+4. **服务保活**：目前服务随 App 进程存活，切后台被回收就断。改用前台服务 + 常驻通知。落点：`android/src/`（新增 Service 组件 + 通知渠道，注意 Android 13+ 要 `POST_NOTIFICATIONS`）。
+5. **NapCat 联调**：`napcat.enabled: true` 后真实收发 QQ 消息，验证 @ 识别、群里 `/persona` 切换绑定、群聊标签前缀。落点：`adapters/napcat.py`。
 
 **P1 — 功能补全**
 
-4. **对话页**：消息分页（现在一次最多取 100 条）、会话导出为 Markdown / JSON。落点：`web/api/dialogue.py` + `static/app.js`。
-5. **人设**：头像支持上传图片到沙箱（现在只能是 emoji 或手填 URL）。落点：`web/api/files.py` 复用上传 + 人设表单。
-6. **记忆**：管理后台支持手动新增记忆（现在只能改 / 删）。落点：`web/api/memories.py` 需补 `POST`。
-7. **模型**：Web 端触发 GGUF 下载与校验（现在只显示「未下载」；内置下载源未核实，见「安装与启动」第 3 步）。落点：`inference/registry.py` + `web/api/models.py`。
-8. **文件页**：图片与文本预览、批量选择删除；表单从 `window.prompt` 换成弹窗，与其它页面风格统一。落点：`static/files.html`。
+6. **对话页**：消息分页（现在一次最多取 100 条）、会话导出为 Markdown / JSON。落点：`web/api/dialogue.py` + `static/app.js`。
+7. **人设**：头像支持上传图片到沙箱（现在只能是 emoji 或手填 URL）。落点：`web/api/files.py` 复用上传 + 人设表单。
+8. **记忆**：管理后台支持手动新增记忆（现在只能改 / 删）。落点：`web/api/memories.py` 需补 `POST`。
+9. **模型**：Web 端触发 GGUF 下载与校验（现在只显示「未下载」；内置下载源未核实，见「安装与启动」第 3 步）。落点：`inference/registry.py` + `web/api/models.py`。
+10. **文件页**：图片与文本预览、批量选择删除；表单从 `window.prompt` 换成弹窗，与其它页面风格统一。落点：`static/files.html`。
+11. **安卓文件页**：目前「文件」只能通过网页界面看，App 内还没有原生文件浏览器。落点：`android/src/`（新增面板，读沙箱根目录）。
 
 **P2 — 工程化与安全**
 
-9. **部署脚本**：README 的安装 / 启动章节已补（M10），Termux 与 Windows 的一键启动脚本仍缺（`scripts/` 目录不存在）。
-10. **CI**：仓库暂无 `.github/`，补 GitHub Actions 跑 pytest + ruff。
-11. **访问控制**：Web 层**没有任何鉴权**。手机测试时若用 `--host 0.0.0.0`，同网段的任何人都能访问文件管理页（等于远程文件读写）；测完请改回 `127.0.0.1`，长期暴露必须先加访问口令。
-12. **可观测性**：后台日志目前只读文件尾部，考虑请求级日志与错误聚合。
+12. **部署脚本**：README 的安装 / 启动章节已补（M10），Termux 与 Windows 的一键启动脚本仍缺（`scripts/` 目录不存在）。
+13. **CI**：仓库暂无 `.github/`，补 GitHub Actions 跑 pytest + ruff。
+14. **访问控制**：Web 层**没有任何鉴权**。服务监听 127.0.0.1 时只有本机可访问（安卓客户端正是这么做的）；但用 `--host 0.0.0.0` 时同网段任何人都能访问文件管理页（等于远程文件读写），长期暴露必须先加访问口令。
+15. **可观测性**：后台日志目前只读文件尾部，考虑请求级日志与错误聚合。
 
 ### 已知取舍（有意为之，不要「顺手优化」）
 

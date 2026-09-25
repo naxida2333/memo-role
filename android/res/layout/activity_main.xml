@@ -1,51 +1,46 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  三段式布局：顶部状态栏 + 内容区（首页 / 终端 / 网页三个面板切换）+ 底部导航。
+
+  为什么不做成 TabLayout / BottomNavigationView：那要引入 Material 或 AndroidX，
+  而本项目刻意让 APK 只依赖安卓框架自带类（见 build.sh 顶部说明）。
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical">
 
-    <!-- 顶栏：地址 + 刷新 + 设置。刻意做得很矮，把屏幕留给聊天区 -->
+    <!-- 顶栏：状态一眼可见，设置入口固定在右上 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:background="@color/accent"
-        android:paddingLeft="12dp"
+        android:paddingLeft="14dp"
         android:paddingRight="4dp"
-        android:paddingTop="4dp"
-        android:paddingBottom="4dp">
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp">
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/app_name"
             android:textColor="#FFFFFF"
-            android:textStyle="bold"
-            android:textSize="15sp" />
+            android:textSize="16sp"
+            android:textStyle="bold" />
 
         <TextView
-            android:id="@+id/toolbar_address"
+            android:id="@+id/status_pill"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginStart="8dp"
-            android:ellipsize="middle"
+            android:layout_marginStart="10dp"
+            android:ellipsize="end"
             android:singleLine="true"
+            android:text="@string/status_checking"
             android:textColor="#D8DEFF"
             android:textSize="12sp" />
-
-        <Button
-            android:id="@+id/btn_refresh"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:background="@android:color/transparent"
-            android:minWidth="0dp"
-            android:paddingLeft="8dp"
-            android:paddingRight="8dp"
-            android:text="@string/action_refresh"
-            android:textColor="#FFFFFF"
-            android:textSize="13sp" />
 
         <Button
             android:id="@+id/btn_settings"
@@ -53,8 +48,8 @@
             android:layout_height="wrap_content"
             android:background="@android:color/transparent"
             android:minWidth="0dp"
-            android:paddingLeft="8dp"
-            android:paddingRight="8dp"
+            android:paddingLeft="10dp"
+            android:paddingRight="10dp"
             android:text="@string/action_settings"
             android:textColor="#FFFFFF"
             android:textSize="13sp" />
@@ -65,96 +60,237 @@
         android:layout_height="0dp"
         android:layout_weight="1">
 
-        <WebView
-            android:id="@+id/web"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent" />
-
-        <!-- 连不上服务时的引导页：把「该怎么启动服务」直接写在屏幕上 -->
+        <!-- ============ 首页：环境状态 + 一键初始化 + 启停 ============ -->
         <ScrollView
-            android:id="@+id/setup"
+            android:id="@+id/panel_home"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:background="@color/bg"
-            android:visibility="gone">
+            android:fillViewport="true">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="20dp">
+                android:padding="16dp">
 
                 <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/setup_title"
-                    android:textColor="@color/text"
-                    android:textSize="18sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/setup_detail"
+                    android:id="@+id/home_status"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:textColor="@color/danger"
-                    android:textSize="12sp" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="16dp"
-                    android:text="@string/setup_hint"
-                    android:textColor="@color/muted"
-                    android:textSize="13sp" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:background="@color/code_bg"
                     android:fontFamily="monospace"
-                    android:padding="10dp"
-                    android:text="@string/setup_commands"
+                    android:lineSpacingExtra="4dp"
                     android:textColor="@color/text"
-                    android:textSize="12sp"
-                    android:textIsSelectable="true" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="16dp"
-                    android:text="@string/setup_address_label"
-                    android:textColor="@color/muted"
                     android:textSize="13sp" />
 
-                <EditText
-                    android:id="@+id/setup_input"
+                <ProgressBar
+                    android:id="@+id/home_progress"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/home_progress_text"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:autofillHints="url"
-                    android:hint="@string/setup_address_hint"
-                    android:inputType="textUri"
-                    android:textSize="14sp" />
+                    android:textColor="@color/muted"
+                    android:textSize="12sp" />
 
                 <Button
-                    android:id="@+id/setup_connect"
+                    android:id="@+id/btn_setup"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
+                    android:layout_marginTop="16dp"
                     android:background="@color/accent"
-                    android:text="@string/action_connect"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="12dp"
+                    android:text="@string/action_setup"
                     android:textColor="#FFFFFF" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/btn_start"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/action_start" />
+
+                    <Button
+                        android:id="@+id/btn_stop"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:text="@string/action_stop" />
+                </LinearLayout>
+
+                <Button
+                    android:id="@+id/btn_open_web"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/action_open_web" />
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="@string/setup_note"
+                    android:layout_marginTop="20dp"
+                    android:text="@string/home_log_title"
                     android:textColor="@color/muted"
                     android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/home_log"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:background="@color/code_bg"
+                    android:fontFamily="monospace"
+                    android:lineSpacingExtra="2dp"
+                    android:padding="10dp"
+                    android:textColor="@color/text"
+                    android:textIsSelectable="true"
+                    android:textSize="11sp" />
             </LinearLayout>
         </ScrollView>
+
+        <!-- ============ 终端：出问题时手动排查用 ============ -->
+        <LinearLayout
+            android:id="@+id/panel_terminal"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@color/code_bg"
+                android:padding="8dp"
+                android:text="@string/terminal_hint"
+                android:textColor="@color/muted"
+                android:textSize="11sp" />
+
+            <ScrollView
+                android:id="@+id/term_scroll"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:background="@color/code_bg">
+
+                <TextView
+                    android:id="@+id/term_out"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:lineSpacingExtra="2dp"
+                    android:padding="10dp"
+                    android:textColor="@color/text"
+                    android:textIsSelectable="true"
+                    android:textSize="11sp" />
+            </ScrollView>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:padding="6dp">
+
+                <EditText
+                    android:id="@+id/term_input"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:hint="@string/terminal_placeholder"
+                    android:imeOptions="actionGo"
+                    android:inputType="text"
+                    android:maxLines="1"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/term_run"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:text="@string/action_run" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ============ 网页：对话页 / 管理后台 / 文件管理 ============ -->
+        <LinearLayout
+            android:id="@+id/panel_web"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingLeft="10dp"
+                android:paddingRight="4dp">
+
+                <TextView
+                    android:id="@+id/web_address"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="middle"
+                    android:singleLine="true"
+                    android:textColor="@color/muted"
+                    android:textSize="12sp" />
+
+                <Button
+                    android:id="@+id/btn_reload"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/action_refresh"
+                    android:textSize="13sp" />
+            </LinearLayout>
+
+            <WebView
+                android:id="@+id/web"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
+        </LinearLayout>
     </FrameLayout>
+
+    <!-- 底部导航 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/code_bg"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/nav_home"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/nav_home" />
+
+        <Button
+            android:id="@+id/nav_terminal"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/nav_terminal" />
+
+        <Button
+            android:id="@+id/nav_web"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/nav_web" />
+    </LinearLayout>
 </LinearLayout>
