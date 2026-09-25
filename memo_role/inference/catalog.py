@@ -3,14 +3,18 @@
 列出适合「超低配 i3 / 安卓」的 GGUF Q4 小模型候选。用户可在
 ``<model_dir>/catalog.json`` 中覆盖同名条目或追加自定义模型，无需改代码。
 
-⚠️ 关于 ``hf_repo`` / ``hf_file``（重要）：
+关于 ``hf_repo`` / ``hf_file``：
 
-    开发环境无法访问 HuggingFace（SSL 连接失败），因此**这些下载源未经核实**，
-    仅作为「默认猜测值」提供，字段含义是「预期可用的仓库名」，不保证当前有效。
-    若下载失败，请到 HuggingFace 搜索对应模型名后修改 ``catalog.json``，
-    或手动把 GGUF 文件放入 ``models/`` 并保持 ``filename`` 一致。
+    下载地址按 ``{下载源}/{hf_repo}/resolve/main/{hf_file}`` 拼（下载源见管理后台
+    「模型」页，默认 https://hf-mirror.com）。**这些条目已逐条实测存在**
+    （2026-09，经 hf-mirror），但仍可能随上游变动；下不到时会明确报出 HTTP 状态，
+    换 ``catalog.json`` 里的仓库名 / 文件名即可，或改用「从链接导入」。
 
-``approx_size_mb`` 为 Q4 量化的**估算体积**，用于展示与预警，非精确值。
+    官方 huggingface.co 在国内通常连不上，所以默认给镜像；要改回官方在
+    管理后台改下载源就行。
+
+``approx_size_mb`` 是**实测的文件大小**（2026-09 从下载源读 Content-Range 得到，
+四舍五入到 MB），用于展示与预警；下载过程中的真实字节数以进度为准。
 """
 
 from __future__ import annotations
@@ -48,8 +52,8 @@ BUILTIN_MODELS: Tuple[ModelSpec, ...] = (
         approx_size_mb=100,
         context=2048,
         filename="smollm2-135m-instruct-q4_k_m.gguf",
-        hf_repo="HuggingFaceTB/SmolLM2-135M-Instruct-GGUF",
-        hf_file="smollm2-135m-instruct-q4_k_m.gguf",
+        hf_repo="bartowski/SmolLM2-135M-Instruct-GGUF",
+        hf_file="SmolLM2-135M-Instruct-Q4_K_M.gguf",
         note="体量最小，仅适合验证链路是否跑通，角色扮演质量有限",
     ),
     ModelSpec(
@@ -57,7 +61,7 @@ BUILTIN_MODELS: Tuple[ModelSpec, ...] = (
         name="Qwen2.5 0.5B Instruct",
         params="0.5B",
         quant="Q4_K_M",
-        approx_size_mb=400,
+        approx_size_mb=469,
         context=4096,
         filename="qwen2.5-0.5b-instruct-q4_k_m.gguf",
         hf_repo="Qwen/Qwen2.5-0.5B-Instruct-GGUF",
@@ -69,7 +73,7 @@ BUILTIN_MODELS: Tuple[ModelSpec, ...] = (
         name="TinyLlama 1.1B Chat",
         params="1.1B",
         quant="Q4_K_M",
-        approx_size_mb=670,
+        approx_size_mb=638,
         context=2048,
         filename="tinyllama-1.1b-chat-v1.0-q4_k_m.gguf",
         hf_repo="TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
@@ -81,7 +85,7 @@ BUILTIN_MODELS: Tuple[ModelSpec, ...] = (
         name="Gemma 3 1B Instruct",
         params="1B",
         quant="Q4_K_M",
-        approx_size_mb=810,
+        approx_size_mb=769,
         context=4096,
         filename="gemma-3-1b-it-q4_k_m.gguf",
         hf_repo="ggml-org/gemma-3-1b-it-GGUF",
@@ -93,7 +97,7 @@ BUILTIN_MODELS: Tuple[ModelSpec, ...] = (
         name="SmolLM2 1.7B Instruct",
         params="1.7B",
         quant="Q4_K_M",
-        approx_size_mb=1060,
+        approx_size_mb=1007,
         context=2048,
         filename="smollm2-1.7b-instruct-q4_k_m.gguf",
         hf_repo="HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF",

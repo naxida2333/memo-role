@@ -107,7 +107,7 @@
           <thead>
             <tr>
               <th>ID</th><th>类型</th><th>重要度</th><th>内容</th>
-              <th>发言人</th><th>会话</th><th>访问</th><th>操作</th>
+              <th>发言人</th><th>会话</th><th>访问</th><th class="cell-actions">操作</th>
             </tr>
           </thead>
           <tbody id="mem-tbody"></tbody>
@@ -129,26 +129,107 @@
   <section class="tab-panel" id="panel-model">
     <div class="panel">
       <div class="panel-head">
-        <h2>当前后端</h2>
+        <h2>推理后端</h2>
         <span class="spacer"></span>
         <button class="btn btn-sm btn-ghost" id="model-refresh">刷新</button>
       </div>
       <div class="kv" id="model-current"></div>
-      <p class="hint" style="margin-top:8px">注意：切换默认模型会立即重载本地模型，可能耗时较久。</p>
-      <pre class="mono box" id="model-result" hidden></pre>
+
+      <div class="field" style="margin-top:12px">
+        <label for="bk-select">用哪个后端跑推理</label>
+        <select id="bk-select">
+          <option value="llama_server">llama_server — 本地模型（容器内拉起 llama-server）</option>
+          <option value="llama_cpp">llama_cpp — 本地模型（进程内，需自行编译）</option>
+          <option value="openai_api">openai_api — 第三方 OpenAI 兼容 API（不用本地模型）</option>
+        </select>
+      </div>
+
+      <div id="bk-openai" hidden>
+        <div class="form-row">
+          <div class="field">
+            <label for="oa-base">base_url *</label>
+            <input id="oa-base" placeholder="https://api.deepseek.com/v1">
+          </div>
+          <div class="field">
+            <label for="oa-model">模型名 *</label>
+            <input id="oa-model" placeholder="deepseek-chat">
+          </div>
+        </div>
+        <div class="field">
+          <label for="oa-keys">API 密钥（一行一个，可填多个自动轮询；留空表示不改动）</label>
+          <textarea id="oa-keys" rows="2" placeholder="sk-..."></textarea>
+        </div>
+        <div class="field">
+          <label for="oa-timeout">超时（秒）</label>
+          <input type="number" id="oa-timeout" value="60" min="5" max="600" style="max-width:120px">
+        </div>
+        <p class="hint">
+          常见第三方：DeepSeek <span class="mono">https://api.deepseek.com/v1</span>、
+          硅基流动 <span class="mono">https://api.siliconflow.cn/v1</span>、
+          本地 Ollama <span class="mono">http://127.0.0.1:11434/v1</span>（免密钥）。
+          密钥只写在本机的 <span class="mono">data/runtime.json</span>，不会回显到页面。
+        </p>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <button class="btn btn-primary" id="bk-save">保存并切换</button>
+        <button class="btn" id="bk-test" hidden>测试连接</button>
+        <span class="hint" id="bk-result"></span>
+      </div>
     </div>
+
     <div class="panel">
-      <h2>可用模型</h2>
-      <div class="table-wrap">
+      <div class="panel-head">
+        <h2>可用模型</h2>
+        <span class="spacer"></span>
+        <span class="hint mono" id="model-dir"></span>
+      </div>
+      <div class="row">
+        <label class="field-inline">下载源
+          <input id="dl-source" class="input-sm" style="min-width:210px" placeholder="https://hf-mirror.com">
+        </label>
+        <button class="btn btn-sm" id="dl-source-save">保存下载源</button>
+        <span class="hint" id="dl-source-result"></span>
+      </div>
+      <p class="hint">huggingface.co 在国内通常连不上，镜像 <span class="mono">https://hf-mirror.com</span> 一般可用。</p>
+      <div class="table-wrap" style="margin-top:8px">
         <table class="table">
           <thead>
             <tr>
               <th>ID</th><th>名称</th><th>参数量</th><th>量化</th>
-              <th>大小</th><th>文件</th><th>状态</th><th>操作</th>
+              <th>大小</th><th>文件</th><th>状态</th>
+              <th class="cell-actions">操作</th>
             </tr>
           </thead>
           <tbody id="model-tbody"></tbody>
         </table>
+      </div>
+      <p class="hint" style="margin-top:8px">
+        本地模型要有 <span class="mono">llama-server</span> 才能真正跑起来（容器里目前还没有）；
+        只下不跑也可以先放着。想立刻聊起来请用上面的第三方 API。
+      </p>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>从链接导入</h2></div>
+      <p class="hint">已经拿到下载地址（HF 直链 / 镜像 / 任意直链）时填这里，服务自己下到模型目录，省得先下到手机再上传。</p>
+      <div class="form-row" style="margin-top:10px">
+        <div class="field">
+          <label for="imp-url">下载链接 *</label>
+          <input id="imp-url" placeholder="https://hf-mirror.com/Qwen/.../resolve/main/xxx.gguf">
+        </div>
+        <div class="field">
+          <label for="imp-name">保存为（留空则取链接里的文件名）</label>
+          <input id="imp-name" placeholder="xxx.gguf">
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn btn-primary" id="imp-start">开始下载</button>
+        <button class="btn btn-ghost" id="dl-cancel" hidden>取消下载</button>
+      </div>
+      <div id="dl-progress" hidden style="margin-top:10px">
+        <div class="progress"><i id="dl-bar"></i></div>
+        <div class="hint mono" id="dl-text" style="margin-top:6px"></div>
       </div>
     </div>
   </section>
@@ -191,6 +272,8 @@
   var defaultPersona = '';
   var memMode = 'list';
   var statusCache = null;
+  var modelCache = null;      // 最近一次 /api/models 的结果
+  var downloadTimer = null;   // 下载进度轮询句柄
 
   document.addEventListener('DOMContentLoaded', init);
 
@@ -680,39 +763,247 @@
   function bindModel() {
     $('model-refresh').addEventListener('click', loadModels);
     $('model-tbody').addEventListener('click', onModelAction);
+    $('bk-select').addEventListener('change', onBackendChange);
+    $('bk-save').addEventListener('click', saveBackend);
+    $('bk-test').addEventListener('click', testApi);
+    $('dl-source-save').addEventListener('click', saveSource);
+    $('imp-start').addEventListener('click', startImport);
+    $('dl-cancel').addEventListener('click', cancelDownload);
   }
 
   async function loadModels() {
     try {
       var data = await MR.get('/api/models');
-      var active = data.active || {};
-      $('model-current').innerHTML =
-        kvItem('后端', data.backend || '-') +
-        kvItem('默认模型', data.default_model || '（未设置）') +
-        kvItem('OpenAI 风格', data.openai_style ? '是' : '否') +
-        kvItem('活跃标识', (active.active_key || []).join(' / ') || '（未装载）');
-      var tbody = $('model-tbody');
-      var models = data.models || [];
-      if (!models.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="hint">没有可用模型</td></tr>';
-        return;
-      }
-      tbody.innerHTML = models.map(function (m) {
-        var isDefault = m.id === data.default_model;
-        return '<tr data-id="' + MR.escape(m.id) + '">' +
-          '<td class="mono">' + MR.escape(m.id) + '</td>' +
-          '<td>' + MR.escape(m.name || '-') + '</td>' +
-          '<td>' + MR.escape(m.params || '-') + '</td>' +
-          '<td>' + MR.escape(m.quant || '-') + '</td>' +
-          '<td class="mono">' + (m.approx_size_mb ? MR.fmtBytes(m.approx_size_mb * 1024 * 1024) : '-') + '</td>' +
-          '<td class="mono">' + MR.escape(m.filename || '-') + '</td>' +
-          '<td>' + (m.downloaded ? '<span class="badge badge-ok">已下载</span>' : '<span class="badge badge-warn">未下载</span>') +
-            (isDefault ? ' <span class="badge badge-accent">默认</span>' : '') + '</td>' +
-          '<td><button class="btn btn-sm" data-act="set"' + (isDefault ? ' disabled' : '') + '>设为默认</button></td>' +
-        '</tr>';
-      }).join('');
+      modelCache = data;
+      renderCurrent(data);
+      renderModelTable(data);
+      renderDownload((data.download || {}).task);
     } catch (err) {
       $('model-current').innerHTML = '<div class="hint">加载失败：' + MR.escape(err.message) + '</div>';
+    }
+  }
+
+  function renderCurrent(data) {
+    var active = data.active || {};
+    var inf = data.inference || {};
+    var oa = inf.openai || {};
+    var rows =
+      kvItem('后端', data.backend || '-') +
+      kvItem('默认模型', data.default_model || '（跟随注册表默认）') +
+      kvItem('活跃标识', (active.active_key || []).join(' / ') || '（未装载）');
+    if (data.openai_style) {
+      rows += kvItem('base_url', oa.base_url || '-') +
+        kvItem('API 模型名', oa.model || '-') +
+        kvItem('密钥数', String(oa.key_count || 0));
+    } else {
+      rows += kvItem('OpenAI 风格', '否');
+    }
+    $('model-current').innerHTML = rows;
+    $('model-dir').textContent = data.model_dir || '';
+
+    // 表单回显。密钥不给明文，只提示已存了几个
+    $('bk-select').value = data.backend || 'llama_server';
+    $('oa-base').value = oa.base_url || '';
+    $('oa-model').value = oa.model || '';
+    $('oa-timeout').value = oa.timeout || 60;
+    $('oa-keys').value = '';
+    $('oa-keys').placeholder = oa.key_count
+      ? ('已保存 ' + oa.key_count + ' 个密钥，留空表示不改动')
+      : 'sk-... 一行一个';
+    onBackendChange();
+    $('dl-source').value = (data.download || {}).source || '';
+  }
+
+  /** 只有选了第三方 API 才显示它的参数，其余后端用不到。 */
+  function onBackendChange() {
+    var isApi = $('bk-select').value === 'openai_api';
+    $('bk-openai').hidden = !isApi;
+    $('bk-test').hidden = !isApi;
+  }
+
+  function renderModelTable(data) {
+    var tbody = $('model-tbody');
+    var models = data.models || [];
+    if (!models.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="hint">没有可用模型</td></tr>';
+      return;
+    }
+    tbody.innerHTML = models.map(function (m) {
+      var isDefault = !data.openai_style && m.id === data.default_model;
+      var canDownload = !m.downloaded && m.hf_repo && m.hf_file;
+      var size = m.downloaded && m.size
+        ? MR.fmtBytes(m.size)
+        : (m.approx_size_mb ? '约 ' + MR.fmtBytes(m.approx_size_mb * 1024 * 1024) : '-');
+      var acts = [];
+      if (canDownload) {
+        acts.push('<button class="btn btn-sm" data-act="download">下载</button>');
+      }
+      if (!data.openai_style) {
+        acts.push('<button class="btn btn-sm" data-act="set"' + (isDefault ? ' disabled' : '') + '>设为默认</button>');
+      }
+      return '<tr data-id="' + MR.escape(m.id) + '">' +
+        '<td class="mono">' + MR.escape(m.id) + '</td>' +
+        '<td>' + MR.escape(m.name || '-') + '</td>' +
+        '<td>' + MR.escape(m.params || '-') + '</td>' +
+        '<td>' + MR.escape(m.quant || '-') + '</td>' +
+        '<td class="mono">' + size + '</td>' +
+        '<td class="mono">' + MR.escape(m.filename || '-') + '</td>' +
+        '<td>' + (m.downloaded
+          ? '<span class="badge badge-ok">已下载</span>'
+          : (m.hf_repo && m.hf_file
+            ? '<span class="badge badge-warn">未下载</span>'
+            : '<span class="badge">无下载源</span>')) +
+          (isDefault ? ' <span class="badge badge-accent">默认</span>' : '') + '</td>' +
+        '<td class="cell-actions"><div class="row">' + acts.join('') + '</div></td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  // ----------------------------------------------------------------
+  // 第三方 API：保存并切换 / 试连
+  // ----------------------------------------------------------------
+  /** 收集第三方 API 表单；密钥留空则不下发（表示沿用已保存的）。 */
+  function openaiPayload() {
+    var payload = {
+      base_url: $('oa-base').value.trim(),
+      model: $('oa-model').value.trim(),
+      timeout: parseFloat($('oa-timeout').value) || 60
+    };
+    var keys = $('oa-keys').value.split('\n').map(function (k) { return k.trim(); })
+      .filter(function (k) { return k; });
+    if (keys.length) payload.api_keys = keys;
+    return payload;
+  }
+
+  async function saveBackend() {
+    var backend = $('bk-select').value;
+    var payload = { backend: backend };
+    if (backend === 'openai_api') {
+      var oa = openaiPayload();
+      if (!oa.base_url || !oa.model) {
+        MR.toast('请先填 base_url 与模型名', 'error');
+        return;
+      }
+      payload = Object.assign(payload, oa);
+    }
+    $('bk-result').textContent = '切换中…';
+    try {
+      var res = await MR.post('/api/models/backend', payload);
+      $('bk-result').textContent = '已切换到 ' + res.backend;
+      MR.toast('推理后端已切换到 ' + res.backend, 'success');
+      loadModels();
+    } catch (err) {
+      $('bk-result').textContent = '切换失败';
+      MR.toast(err.message, 'error');
+    }
+  }
+
+  async function testApi() {
+    var payload = openaiPayload();
+    if (!payload.base_url || !payload.model) {
+      MR.toast('请先填 base_url 与模型名', 'error');
+      return;
+    }
+    var btn = $('bk-test');
+    btn.disabled = true;
+    $('bk-result').textContent = '正在试连（会真的发一次极小请求）…';
+    try {
+      var res = await MR.post('/api/models/api-test', payload);
+      $('bk-result').textContent = '通了：' + res.latency_ms + 'ms，模型回复「' + (res.reply || '').trim() + '」';
+      MR.toast('连接成功', 'success');
+    } catch (err) {
+      $('bk-result').textContent = '失败：' + err.message;
+      MR.toast(err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // 下载
+  // ----------------------------------------------------------------
+  async function saveSource() {
+    try {
+      var res = await MR.post('/api/models/source', { source: $('dl-source').value.trim() });
+      $('dl-source').value = res.source;
+      $('dl-source-result').textContent = '已保存';
+      MR.toast('下载源已保存', 'success');
+    } catch (err) {
+      MR.toast(err.message, 'error');
+    }
+  }
+
+  async function startImport() {
+    var url = $('imp-url').value.trim();
+    if (!url) { MR.toast('请先填下载链接', 'error'); return; }
+    await beginDownload({ url: url, filename: $('imp-name').value.trim() });
+  }
+
+  async function beginDownload(payload) {
+    try {
+      await MR.post('/api/models/download', payload);
+      $('imp-url').value = '';
+      $('imp-name').value = '';
+      MR.toast('已开始下载', 'success');
+      loadModels();
+    } catch (err) {
+      MR.toast(err.message, 'error');
+    }
+  }
+
+  async function cancelDownload() {
+    try {
+      await MR.post('/api/models/download/cancel', {});
+      MR.toast('已请求取消', 'info');
+    } catch (err) {
+      MR.toast(err.message, 'error');
+    }
+  }
+
+  function renderDownload(task) {
+    if (!task) {
+      $('dl-progress').hidden = true;
+      $('dl-cancel').hidden = true;
+      stopDownloadPoll();
+      return;
+    }
+    var labels = { running: '下载中', done: '已完成', failed: '失败', canceled: '已取消' };
+    var text = task.filename + ' · ' + (labels[task.status] || task.status) +
+      ' · ' + MR.fmtBytes(task.done) + (task.total ? ' / ' + MR.fmtBytes(task.total) : '');
+    if (task.error) text += ' · ' + task.error;
+    if (task.status === 'done') text += ' · ' + task.dest;
+    $('dl-text').textContent = text;
+    $('dl-bar').style.width = Math.round((task.ratio || 0) * 100) + '%';
+    $('dl-progress').hidden = false;
+    $('dl-cancel').hidden = task.status !== 'running';
+    if (task.status === 'running') scheduleDownloadPoll(); else stopDownloadPoll();
+  }
+
+  function scheduleDownloadPoll() {
+    if (downloadTimer) return;
+    downloadTimer = setTimeout(pollDownload, 1500);
+  }
+
+  function stopDownloadPoll() {
+    if (downloadTimer) { clearTimeout(downloadTimer); downloadTimer = null; }
+  }
+
+  async function pollDownload() {
+    downloadTimer = null;
+    try {
+      var data = await MR.get('/api/models/download');
+      var task = data.task;
+      renderDownload(task);
+      if (!task || task.status !== 'running') {
+        if (task && task.status === 'done') {
+          MR.toast('下载完成：' + task.filename, 'success');
+        } else if (task && task.status === 'failed') {
+          MR.toast('下载失败：' + (task.error || ''), 'error');
+        }
+        loadModels();  // 刷新「已下载」状态
+      }
+    } catch (err) {
+      scheduleDownloadPoll();  // 单次轮询失败不终止
     }
   }
 
@@ -722,16 +1013,33 @@
   }
 
   async function onModelAction(e) {
-    var btn = e.target.closest('[data-act="set"]');
+    var btn = e.target.closest('[data-act]');
     if (!btn) return;
     var tr = btn.closest('tr');
     var id = tr.getAttribute('data-id');
+    var act = btn.getAttribute('data-act');
+
+    if (act === 'download') {
+      var spec = ((modelCache && modelCache.models) || []).filter(function (m) {
+        return m.id === id;
+      })[0];
+      var ok = await MR.confirm(
+        '从「' + ((modelCache.download || {}).source || '') + '」下载\n' +
+        (spec ? spec.filename : id) + '\n' +
+        (spec && spec.approx_size_mb ? '约 ' + spec.approx_size_mb + ' MB，' : '') +
+        '期间请不要退出，可在下面看到进度。',
+        { title: '下载模型' }
+      );
+      if (!ok) return;
+      await beginDownload({ model_id: id });
+      return;
+    }
+
+    if (act !== 'set') return;
     btn.disabled = true;
     btn.textContent = '切换中…';
     try {
       var res = await MR.post('/api/models/default', { model_id: id });
-      $('model-result').hidden = false;
-      $('model-result').textContent = JSON.stringify(res, null, 2);
       MR.toast('默认模型已切换为「' + (res.default_model || id) + '」', 'success');
       loadModels();
     } catch (err) {

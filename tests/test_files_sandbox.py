@@ -218,6 +218,50 @@ def test_save_upload_rejects_oversize(sandbox: FileSandbox) -> None:
 
 
 # ----------------------------------------------------------------------
+# 流式上传（几百 MB 的模型走这条）
+# ----------------------------------------------------------------------
+def test_save_upload_stream_writes_whole_stream(sandbox: FileSandbox) -> None:
+    import io
+
+    chunks = [b"a" * 10, b"b" * 5]
+    info = sandbox.save_upload_stream("models", "demo.gguf", io.BytesIO(b"".join(chunks)))
+    assert info["path"] == "models/demo.gguf"
+    assert info["size"] == 15
+    assert (sandbox.root / "models" / "demo.gguf").read_bytes() == b"a" * 10 + b"b" * 5
+
+
+def test_save_upload_stream_uses_basename_only(sandbox: FileSandbox) -> None:
+    import io
+
+    info = sandbox.save_upload_stream("", "../../evil.bin", io.BytesIO(b"x"))
+    assert info["path"] == "evil.bin"
+
+
+def test_save_upload_stream_rejects_oversize_and_cleans_part(sandbox: FileSandbox) -> None:
+    import io
+
+    tiny = FileSandbox(sandbox.root, max_upload_bytes=4)
+    # 分块故意设成 2：要能拦住「跨块累积后才超限」的情况
+    with pytest.raises(TooLargeError):
+        tiny.save_upload_stream("", "big.bin", io.BytesIO(b"123456"), chunk=2)
+    assert not (sandbox.root / "big.bin").exists()
+    assert not (sandbox.root / "big.bin.part").exists()
+
+
+def test_save_upload_stream_rejects_protected_file(tmp_root) -> None:
+    import io
+
+    db = tmp_root / "data" / "app.db"
+    db.parent.mkdir(parents=True)
+    db.write_bytes(b"keep")
+    guarded = FileSandbox(tmp_root, protected=[db])
+
+    with pytest.raises(ProtectedPathError):
+        guarded.save_upload_stream("data", "app.db", io.BytesIO(b"overwrite"))
+    assert db.read_bytes() == b"keep"
+
+
+# ----------------------------------------------------------------------
 # 受保护文件
 # ----------------------------------------------------------------------
 @pytest.fixture

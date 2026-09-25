@@ -16,7 +16,6 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from ...files import TooLargeError
 from ..state import AppState
 from .deps import get_state
 
@@ -98,18 +97,19 @@ def delete(
 
 
 @router.post("/upload", status_code=201)
-async def upload(
+def upload(
     dir: str = Form(""),
     file: UploadFile = File(...),
     state: AppState = Depends(get_state),
 ) -> Dict[str, Any]:
-    """上传文件到指定目录（文件名只取 basename，杜绝路径穿越）。"""
-    sandbox = state.sandbox
-    # 多读 1 字节用于判断是否超限，避免把超大文件整个读进内存
-    data = await file.read(sandbox.max_upload_bytes + 1)
-    if len(data) > sandbox.max_upload_bytes:
-        raise TooLargeError(f"文件超过 {sandbox.max_upload_bytes} 字节上限")
-    return sandbox.save_upload(dir, file.filename or "upload.bin", data)
+    """上传文件到指定目录（文件名只取 basename，杜绝路径穿越）。
+
+    刻意是同步路由 + 流式落盘：模型文件动辄几百 MB，``await file.read()``
+    会把它整个读进内存，而同步路由跑在线程池里，可以边读边写、有多少写多少。
+    """
+    return state.sandbox.save_upload_stream(
+        dir, file.filename or "upload.bin", file.file
+    )
 
 
 @router.get("/download")

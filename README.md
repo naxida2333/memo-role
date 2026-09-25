@@ -58,12 +58,16 @@ python -m memo_role --check          # 启动自检：一次看清缺什么
 
 ### 3. 准备模型（想真实聊天才需要）
 
-把 GGUF 文件放进配置里的模型目录（默认 `models/`），**文件名必须与模型目录登记的一致**，
-例如最小的那个：
+在管理后台的「模型」页可以直接下载：每条内置模型都有「下载」按钮，下载源默认是
+国内可直连的 `https://hf-mirror.com`（换成 `https://huggingface.co` 或自建反代也行）。
+已经拿到链接的，用同一页的「从链接导入」填进去，服务自己下到 `models/`。
+
+手工放置也可以：把 GGUF 放进配置里的模型目录（默认 `models/`），**文件名必须与模型目录
+登记的一致**，例如最小的那个：
 
 ```
 models/smollm2-135m-instruct-q4_k_m.gguf      # 约 100MB，仅用于验证链路
-models/qwen2.5-0.5b-instruct-q4_k_m.gguf      # 约 400MB，中文勉强可用，低配推荐
+models/qwen2.5-0.5b-instruct-q4_k_m.gguf      # 约 469MB，中文勉强可用，低配推荐
 ```
 
 导出完整清单（含每个模型期望的路径）可看管理后台的「模型」页，或：
@@ -72,14 +76,24 @@ models/qwen2.5-0.5b-instruct-q4_k_m.gguf      # 约 400MB，中文勉强可用�
 python -m memo_role --check     # 「模型」一项会打印出期望路径
 ```
 
-> ⚠️ **内置下载源未经核实**：`memo_role/inference/catalog.py` 里的 `hf_repo` / `hf_file`
-> 是开发环境（无法访问 HuggingFace）留下的推测值，不保证有效。请自行在 HuggingFace
-> 搜索对应模型名，或从其它机器拷贝 GGUF 过来；下载后可用 `models/catalog.json`
-> 覆盖内置条目（含自定义模型）。
+> 内置下载源（`memo_role/inference/catalog.py` 里的 `hf_repo` / `hf_file`）已逐条实测
+> 可下载（2026-09 经 hf-mirror），但上游随时可能改名/下架；下不到时会明确报出 HTTP
+> 状态，两分钟内可以自己修：改 `models/catalog.json` 覆盖条目，或直接用「从链接导入」。
 
 另外还需要 **llama.cpp 的 `llama-server` 可执行文件**（默认后端），装好后把路径填进
 `inference.llama_server.bin_path`，或让它出现在 `PATH` 里。找不到时程序会在第一次
 对话时明确报出「缺哪个文件 / 缺哪个可执行文件」，而不是静默等待。
+
+### 3.5 不想装本地模型？接第三方 API
+
+管理后台「模型」页最上面可以切推理后端：选 `openai_api`，填 `base_url`、模型名、
+API 密钥（一行一个，可填多个自动轮询），点「测试连接」确认通，再「保存并切换」。
+切换是**立即生效**并写入 `data/runtime.json` 的，重启仍然有效；密钥只存本机、
+接口只回显条数，不会出现在页面或日志里。
+
+常见地址：DeepSeek `https://api.deepseek.com/v1`、硅基流动 `https://api.siliconflow.cn/v1`、
+本地 Ollama `http://127.0.0.1:11434/v1`（免密钥）。这条路不需要 `llama-server`，
+手机上是最快能真聊起来的办法。
 
 ### 4. 启动
 

@@ -162,6 +162,12 @@ select { width: auto; }
   margin-left: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden;
 }
 .bar > i { display: block; height: 100%; background: var(--accent); }
+/* 通栏进度条（模型下载） */
+.progress {
+  height: 8px; border-radius: 4px; border: 1px solid var(--border);
+  background: var(--surface-2); overflow: hidden;
+}
+.progress > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s ease; }
 
 /* ---------------- 聊天：气泡 / 输入区 ---------------- */
 .topbar {
@@ -288,4 +294,13 @@ select { width: auto; }
   .form-row { grid-template-columns: 1fr; }
   .chat-title { max-width: 34%; }
   .controls .field { min-width: 130px; }
+
+  /* 表格不再为了塞进一屏而挤压单元格：挤到最后「操作」列只剩 50px 宽，
+     3~4 个按钮竖着堆起来，一行能有 200px 高，时间也被折成三行。
+     这里保持列的自然宽度、横向滚动，并把操作列钉在右侧，按钮始终够宽。 */
+  .table { min-width: max-content; }
+  .table th.cell-actions, .table td.cell-actions {
+    position: sticky; right: 0; background: var(--surface);
+  }
+  .table tbody tr:hover td.cell-actions { background: var(--surface-2); }
 }

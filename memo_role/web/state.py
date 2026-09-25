@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -33,6 +33,7 @@ from ..dialogue.backends import BackendFactory, BackendPool
 from ..dialogue.context import GroupReplyPolicy
 from ..dialogue.engine import DialogueEngine
 from ..files import FileSandbox
+from ..inference.downloader import DEFAULT_SOURCE, DownloadManager
 from ..logging_setup import get_logger
 from ..memory.manager import MemoryManager
 from ..persona.manager import PersonaManager
@@ -45,6 +46,16 @@ DIALOGUE_OVERRIDABLE = (
     "group_reply_probability",
     "group_reply_when_mentioned",
     "label_group_speakers",
+)
+
+#: 允许运行时覆盖的 ``inference.openai`` 字段。白名单而非「照单全收」：
+#: runtime.json 是可以被文件管理页手改的，写进别的键不该影响配置对象。
+OPENAI_OVERRIDABLE = (
+    "base_url",
+    "model",
+    "api_keys",
+    "timeout",
+    "max_key_attempts",
 )
 
 #: 运行时设置文件名（相对 ``data_dir``）
@@ -60,6 +71,12 @@ class RuntimeSettings:
     model_id: str = ""
     #: 覆盖到 ``cfg.dialogue`` 上的字段
     dialogue: Dict[str, Any] = field(default_factory=dict)
+    #: 覆盖到 ``cfg.inference`` 上的字段：``{"backend": ..., "openai": {...}}``。
+    #: 存在的理由是「手机上换后端」——改 config.yaml 要进文件管理页手改再重启，
+    #: 而第三方 API 的地址与密钥本来就随时会变。
+    inference: Dict[str, Any] = field(default_factory=dict)
+    #: 模型下载源；空串表示用 ``downloader.DEFAULT_SOURCE``
+    model_source: str = ""
 
     # ------------------------------------------------------------------
     # 读写
@@ -80,16 +97,24 @@ class RuntimeSettings:
             return cls(target)
 
         dialogue = data.get("dialogue")
+        inference = data.get("inference")
         return cls(
             target,
             model_id=str(data.get("model_id") or ""),
             dialogue=dialogue if isinstance(dialogue, dict) else {},
+            inference=inference if isinstance(inference, dict) else {},
+            model_source=str(data.get("model_source") or ""),
         )
 
     def save(self) -> None:
         """落盘（先写临时文件再替换，避免写一半断电留下半个 JSON）。"""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"model_id": self.model_id, "dialogue": dict(self.dialogue)}
+        payload = {
+            "model_id": self.model_id,
+            "dialogue": dict(self.dialogue),
+            "inference": dict(self.inference),
+            "model_source": self.model_source,
+        }
         tmp = self.path.with_name(self.path.name + ".tmp")
         tmp.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -101,6 +126,8 @@ class RuntimeSettings:
         *,
         model_id: Optional[str] = None,
         dialogue: Optional[Dict[str, Any]] = None,
+        inference: Optional[Dict[str, Any]] = None,
+        model_source: Optional[str] = None,
     ) -> None:
         """修改并立即落盘；传 ``None`` 表示该字段不变。"""
         if model_id is not None:
@@ -108,6 +135,10 @@ class RuntimeSettings:
         for key, value in (dialogue or {}).items():
             if key in DIALOGUE_OVERRIDABLE and value is not None:
                 self.dialogue[key] = value
+        if inference is not None:
+            self.inference = {**self.inference, **inference}
+        if model_source is not None:
+            self.model_source = str(model_source).strip()
         self.save()
 
     # ------------------------------------------------------------------
@@ -117,12 +148,34 @@ class RuntimeSettings:
         """把设置覆盖到配置对象上（幂等，可重复调用）。"""
         if self.model_id:
             cfg.inference.model = self.model_id
+        if self.inference.get("backend"):
+            cfg.inference.backend = str(self.inference["backend"])
+        openai = self.inference.get("openai")
+        if isinstance(openai, dict):
+            for key, value in openai.items():
+                if key in OPENAI_OVERRIDABLE:
+                    setattr(cfg.inference.openai, key, value)
         for key, value in self.dialogue.items():
             if key in DIALOGUE_OVERRIDABLE and value is not None:
                 setattr(cfg.dialogue, key, value)
 
     def describe(self) -> Dict[str, Any]:
-        return {"model_id": self.model_id, "dialogue": dict(self.dialogue)}
+        """供接口展示；**密钥只给条数**，避免后台或日志回显明文。"""
+        openai = self.inference.get("openai")
+        openai = openai if isinstance(openai, dict) else {}
+        return {
+            "model_id": self.model_id,
+            "dialogue": dict(self.dialogue),
+            "model_source": self.model_source,
+            "inference": {
+                "backend": str(self.inference.get("backend") or ""),
+                "openai": {
+                    "base_url": str(openai.get("base_url") or ""),
+                    "model": str(openai.get("model") or ""),
+                    "key_count": len([k for k in (openai.get("api_keys") or []) if k]),
+                },
+            },
+        }
 
 
 @dataclass
@@ -138,6 +191,8 @@ class AppState:
     runtime: RuntimeSettings
     #: NapCat 适配器；未启用时为 ``None``
     napcat: Optional[Any] = None
+    #: 模型下载任务（进程内单例，同时只跑一个）
+    downloads: DownloadManager = field(default_factory=DownloadManager)
     started_at: float = field(default_factory=time.time)
 
     # ------------------------------------------------------------------
@@ -187,6 +242,69 @@ class AppState:
         return (self.cfg.inference.backend or "") == "openai_api"
 
     # ------------------------------------------------------------------
+    # 推理后端 / 第三方 API
+    # ------------------------------------------------------------------
+    def set_inference(
+        self, *, backend: str, openai: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """切换推理后端（并可同时更新第三方 API 配置），立即重建后端。
+
+        顺序与 :meth:`set_default_model` 一致：**重建成功才落盘**。否则
+        runtime.json 里会留下一个起不来的后端，下次启动直接连不上模型，
+        而用户并没有动过配置。
+
+        ``openai_api`` 下 ``inference.model`` 的含义会从「注册表里的模型 id」
+        变成「API 的模型名」。两者混在一起必然出错（切过去以后默认模型还是
+        本地那个 id，请求就会被换成 ``model=qwen2.5-0.5b`` 打到对方服务器），
+        所以这里统一清空它，让模型名只由 ``openai.model`` 决定；会话级仍可以
+        用 ``/model`` 指定别的名字。
+
+        :raises InferenceError: 后端装载失败（配置已回滚）
+        """
+        previous_backend = self.cfg.inference.backend
+        previous_openai = replace(self.cfg.inference.openai)
+        previous_model = self.cfg.inference.model
+
+        self.cfg.inference.backend = backend
+        for key, value in (openai or {}).items():
+            if key in OPENAI_OVERRIDABLE:
+                setattr(self.cfg.inference.openai, key, value)
+        if backend == "openai_api" or (
+            self.cfg.inference.model not in self.backends.model_ids()
+        ):
+            self.cfg.inference.model = ""
+
+        try:
+            self.backends.switch()
+        except Exception:
+            self.cfg.inference.backend = previous_backend
+            self.cfg.inference.openai = previous_openai
+            self.cfg.inference.model = previous_model
+            raise
+
+        block: Dict[str, Any] = {"backend": backend}
+        if openai:
+            block["openai"] = {
+                k: v for k, v in openai.items() if k in OPENAI_OVERRIDABLE
+            }
+        self.runtime.update(
+            inference=block,
+            # 模型 id 被清掉时，运行时里的那份也要清，否则下次启动又会被盖回来
+            model_id="" if not self.cfg.inference.model else None,
+        )
+        return self.backends.describe()
+
+    # ------------------------------------------------------------------
+    # 模型下载
+    # ------------------------------------------------------------------
+    def download_source(self) -> str:
+        """当前模型下载源。"""
+        return self.runtime.model_source or DEFAULT_SOURCE
+
+    def model_dir(self) -> Path:
+        return Path(self.cfg.model_dir)
+
+    # ------------------------------------------------------------------
     # 展示
     # ------------------------------------------------------------------
     def describe(self) -> Dict[str, Any]:
@@ -229,7 +347,11 @@ def build_state(
     """
     cfg.ensure_dirs()
 
-    runtime = runtime or RuntimeSettings.load(Path(cfg.data_dir) / RUNTIME_FILENAME)
+    # 注意用 resolve_path：cfg.data_dir 默认是相对路径（"data"），直接拼会落到
+    # 进程的当前目录而不是项目根 —— 测试里就曾把 runtime.json 写进仓库。
+    runtime = runtime or RuntimeSettings.load(
+        cfg.resolve_path(cfg.data_dir) / RUNTIME_FILENAME
+    )
     runtime.apply_to(cfg)
 
     memory = MemoryManager.build(cfg)

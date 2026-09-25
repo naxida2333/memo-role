@@ -28,8 +28,11 @@ logger = get_logger(__name__)
 
 #: 可在线编辑的文本大小上限（低配设备上编辑大文件既占内存也没意义）
 MAX_TEXT_BYTES = 512 * 1024
-#: 上传大小上限
-MAX_UPLOAD_BYTES = 64 * 1024 * 1024
+#: 上传大小上限。定得比「编辑器」大得多是有意的：把量化模型（GGUF）拷进
+#: 手机最现实的路子就是「别处下好 → 上传」，而最小的中文可用模型也有 400 MB。
+MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
+#: 流式上传的分块大小
+UPLOAD_CHUNK_BYTES = 1 * 1024 * 1024
 #: 单目录返回条数上限，避免超大目录把内存打满
 MAX_ENTRIES = 1000
 #: 判定「是否文本」时采样的字节数
@@ -309,6 +312,46 @@ class FileSandbox:
         name = clean_filename(filename)
         target = f"{base}/{name}" if base else name
         return self.save_bytes(target, data)
+
+    def save_upload_stream(
+        self, directory: Any, filename: Any, stream: Any, *, chunk: int = UPLOAD_CHUNK_BYTES
+    ) -> Dict[str, Any]:
+        """流式保存上传文件：边读边写，几 GB 的 GGUF 也不会整个进内存。
+
+        先写 ``<名字>.part`` 再改名：中途超限或断线时，模型目录里不会留下
+        一个「看起来完整、其实只有一半」的文件被当成模型加载。
+        """
+        base = clean_rel_path(directory)
+        name = clean_filename(filename)
+        target = f"{base}/{name}" if base else name
+        if not clean_rel_path(target):
+            raise SandboxError("未指定文件路径")
+        path = self.resolve(target)
+        if path.is_dir():
+            raise SandboxError("目标是目录，不能覆盖")
+        self._ensure_editable(path)
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        part = path.with_name(path.name + ".part")
+        written = 0
+        try:
+            with part.open("wb") as out:
+                while True:
+                    data = stream.read(chunk)
+                    if not data:
+                        break
+                    written += len(data)
+                    if written > self.max_upload_bytes:
+                        raise TooLargeError(
+                            f"文件超过 {self.max_upload_bytes} 字节上限"
+                        )
+                    out.write(data)
+            part.replace(path)
+        except BaseException:
+            part.unlink(missing_ok=True)
+            raise
+        logger.info("文件管理上传：%s（%d 字节）", self.rel_of(path), written)
+        return self.entry(path)
 
     def make_dir(self, rel: Any) -> Dict[str, Any]:
         """新建目录（可多级）。"""

@@ -106,6 +106,13 @@ class ModelRegistry:
         """模型文件是否已存在于本地。"""
         return self.path_of(spec).exists()
 
+    def file_size(self, spec: ModelSpec) -> int:
+        """本地文件大小；不存在时返回 0（界面据此显示「未下载」）。"""
+        try:
+            return self.path_of(spec).stat().st_size
+        except OSError:
+            return 0
+
     def downloaded(self) -> List[ModelSpec]:
         """列出本地已就绪的模型。"""
         return [s for s in self._specs if self.is_downloaded(s)]
@@ -126,6 +133,7 @@ class ModelRegistry:
                 **s.to_dict(),
                 "path": str(self.path_of(s)),
                 "downloaded": self.is_downloaded(s),
+                "size": self.file_size(s),
             }
             for s in self._specs
         ]

@@ -72,6 +72,15 @@ def test_dialogue_policy_rejects_empty_payload(web_client) -> None:
     assert web_client.put("/api/system/dialogue", json={}).status_code == 400
 
 
+def test_runtime_settings_live_under_project_root(web_state, tmp_root) -> None:
+    """runtime.json 必须落在项目根下的 data/，不能是进程当前目录。
+
+    ``cfg.data_dir`` 默认是相对路径，曾经直接拼进 Path 用过 —— 结果是测试把
+    运行时设置写进了仓库的 data/，本地开发与测试互相污染。
+    """
+    assert web_state.runtime.path == tmp_root / "data" / "runtime.json"
+
+
 def test_logs_tail(web_state, web_client) -> None:
     log_path = Path(web_state.cfg.log_file)
     log_path.parent.mkdir(parents=True, exist_ok=True)

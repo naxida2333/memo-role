@@ -33,7 +33,8 @@
       <table class="table">
         <thead>
           <tr>
-            <th>名称</th><th>类型</th><th>大小</th><th>修改时间</th><th>状态</th><th>操作</th>
+            <th>名称</th><th>类型</th><th>大小</th><th>修改时间</th><th>状态</th>
+            <th class="cell-actions">操作</th>
           </tr>
         </thead>
         <tbody id="file-tbody"></tbody>
@@ -74,10 +75,15 @@
     try {
       meta = await MR.get('/api/files/meta');
       var protectedList = (meta.protected || []).map(shortPath).join('、');
-      $('sandbox-note').textContent = '沙箱根目录：' + meta.root +
-        '（上传上限 ' + MR.fmtBytes(meta.max_upload_bytes) +
-        '，在线编辑上限 ' + MR.fmtBytes(meta.max_text_bytes) + '）' +
-        (protectedList ? '｜受保护：' + protectedList : '');
+      // 窄屏上一行放不下这么多字，折成四五行的说明会把工具条顶得很高；
+      // 这里只留一句结论，受保护文件清单放进 title（长按可见）
+      $('sandbox-note').textContent = '根目录 ' + meta.root +
+        ' ｜ 上传 ≤ ' + MR.fmtBytes(meta.max_upload_bytes) +
+        ' ｜ 在线编辑 ≤ ' + MR.fmtBytes(meta.max_text_bytes) +
+        (protectedList ? ' ｜ 受保护 ' + (meta.protected || []).length + ' 个' : '');
+      $('sandbox-note').title = protectedList
+        ? '受保护文件（不可编辑或删除）：' + protectedList
+        : '';
     } catch (err) {
       $('sandbox-note').textContent = '沙箱信息加载失败：' + err.message;
     }
@@ -140,7 +146,7 @@
         '<td class="mono">' + (isDir ? '-' : MR.fmtBytes(en.size)) + '</td>' +
         '<td class="mono">' + MR.escape(MR.fmtTime(en.mtime)) + '</td>' +
         '<td>' + status + '</td>' +
-        '<td><div class="row">' + actions + '</div></td>' +
+        '<td class="cell-actions"><div class="row">' + actions + '</div></td>' +
       '</tr>';
     }).join('');
   }
