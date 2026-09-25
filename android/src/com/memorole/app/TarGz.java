@@ -9,6 +9,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.zip.GZIPInputStream;
 
 /**
@@ -257,28 +258,51 @@ public final class TarGz {
         return name;
     }
 
-    /** pax 扩展头是若干条 {@code <长度> <键>=<值>\n}，只需取出 path。 */
+    /**
+     * 解析 pax 扩展头，取出 {@code path} 记录的内容。
+     *
+     * <p>pax 的每条记录形如 {@code <总长度> <键>=<值>\n}，其中总长度是**字节数**
+     * 且把自身也算进去。这里必须全程按字节处理：如果先解码成 Java 字符串再按下标切片，
+     * 那么含多字节字符（例如中文路径）的记录就会错位 —— 长度是字节，下标是字符。
+     */
     private static String parsePaxPath(byte[] data) {
-        String text = new String(data, java.nio.charset.StandardCharsets.UTF_8);
         int i = 0;
-        while (i < text.length()) {
-            int sp = text.indexOf(' ', i);
-            if (sp < 0) {
+        while (i < data.length) {
+            int sp = i;
+            while (sp < data.length && data[sp] != ' ') {
+                sp++;
+            }
+            if (sp >= data.length) {
                 break;
             }
             int len;
             try {
-                len = Integer.parseInt(text.substring(i, sp).trim());
+                len = Integer.parseInt(
+                        new String(data, i, sp - i, StandardCharsets.US_ASCII).trim());
             } catch (NumberFormatException e) {
                 break;
             }
-            if (len <= 0 || i + len > text.length()) {
+            if (len <= 0 || i + len > data.length) {
                 break;
             }
-            String record = text.substring(sp + 1, i + len - 1); // 去掉结尾换行
-            int eq = record.indexOf('=');
-            if (eq > 0 && "path".equals(record.substring(0, eq))) {
-                return record.substring(eq + 1);
+            int valueStart = sp + 1;
+            int valueEnd = i + len - 1; // 去掉结尾的换行
+            if (valueEnd > valueStart) {
+                int eq = -1;
+                for (int k = valueStart; k < valueEnd; k++) {
+                    if (data[k] == '=') {
+                        eq = k;
+                        break;
+                    }
+                }
+                if (eq > valueStart) {
+                    String key = new String(data, valueStart, eq - valueStart,
+                            StandardCharsets.US_ASCII);
+                    if ("path".equals(key)) {
+                        return new String(data, eq + 1, valueEnd - eq - 1,
+                                StandardCharsets.UTF_8);
+                    }
+                }
             }
             i += len;
         }

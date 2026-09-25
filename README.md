@@ -143,7 +143,7 @@ Android 本身只拒绝 targetSdk < 23 的应用，28 在 Android 14/15 上可�
 ### 安装
 
 拷到手机点击安装（需允许「安装未知来源应用」），或
-`adb install -r android/dist/memo-role-0.2.0.apk`。
+`adb install -r android/dist/memo-role-0.2.1.apk`。
 
 ### 重新构建
 
@@ -156,14 +156,41 @@ SDK=/path/to/android-sdk ./build.sh     # 需要 SDK 的 build-tools + platforms
 不用 Gradle：这个 App 只用 Android 框架自带类（无 AndroidX、无第三方库），
 跳开 Gradle 能少下载几百 MB 依赖，也避开 AGP 与 JDK 版本匹配的坑。
 
+> 注意：`build.sh` 会主动挑一个 JDK 11~17 —— build-tools 34 自带的 d8 在
+> JDK 21+ 上会直接抛空指针。
+
 ### 内置的第三方二进制
 
 `android/assets/proot/` 里的 `proot` 与两个 `.so` 取自 Termux 官方仓库，
 许可以及上游源码地址见该目录下的 `NOTICE.md`。它们不是本项目的代码，
 随 APK 分发是为了让 App 能自己拉起容器。
 
-> 注意：`build.sh` 会主动挑一个 JDK 11~17 —— build-tools 34 自带的 d8 在
-> JDK 21+ 上会直接抛空指针。首次构建还会生成一把自签名调试密钥（不纳入版本管理）。
+### 离线自测（不需要手机）
+
+```bash
+android/tests/run.sh     # 校验自写的 tar 解压器（需要 JDK 11+ / python3 / GNU tar）
+```
+
+它用合成 tar.gz 分别喂给 `TarGz` 与系统 `tar`，逐项比对条目、类型、符号链接目标、
+内容摘要、权限位（含 setuid）与硬链接。覆盖 GNU 与 POSIX(pax) 两种打包格式，
+以及超长路径、二进制内容、空文件等边界 —— 解压是初始化流程的第 3 步，
+错了后面全卡住，所以在真机之外必须有办法验证。
+
+### 签名约定（重要）
+
+安卓要求「覆盖安装的新版本必须与已装版本同一签名」，否则只能卸载重装 ——
+而这个 App 卸载会连容器、依赖和模型一起删掉（几个 GB）。因此：
+
+- **签名密钥**：`android/debug.keystore`（自签名调试密钥，**不纳入版本管理**，
+  换了机器要自己保管好；丢了就只能卸载重装）。
+- **指纹记录**：`android/signing-cert.sha256`（纳入版本管理）。
+  `build.sh` 在签名**之前**核对密钥指纹，不一致直接中止且不产出 APK；
+  签名后还会再核验一次成品，防止签错文件。
+- 确实要换密钥：删掉 `signing-cert.sha256` 重新构建，或用
+  `ALLOW_KEY_CHANGE=1 ./build.sh` 临时放行。
+
+当前指纹：`0730afc2e31455e6d94e0950f2b931c93fa491b750fe3b92266c7b5db392d544`
+（v0.1.0 / v0.1.1 / v0.2.0 / v0.2.1 全部一致，可逐版覆盖安装）
 
 ## 人工测试流程
 
@@ -260,6 +287,8 @@ SDK=/path/to/android-sdk ./build.sh     # 需要 SDK 的 build-tools + platforms
 | proot 是否支持安卓必需选项 | 二进制字符串 + 包元数据 | 支持 `--link2symlink` / `--kill-on-exit` |
 | 依赖能否免编译安装 | `pip download --platform manylinux2014_aarch64` | 全部 30 个包均有 aarch64 现成轮子（含 `pydantic-core`） |
 | rootfs 结构是否被解压器覆盖 | 用 `tarfile` 解析真实 Ubuntu 包 | 3413 条目，typeflag 仅 0/1/2/5，无 pax 头；usrmerge（`bin` 是指向 `usr/bin` 的符号链接）已适配 |
+| 解压器产出是否与系统 tar 一致 | `android/tests/run.sh`：同一 tar.gz 分别给 `TarGz` 与 GNU tar，逐项比对 | 真实 rootfs 3413 条目零差异；合成包（GNU / pax 两种格式）也全对 |
+| 签名是否可覆盖安装 | 逐版比对 `apksigner verify --print-certs` | v0.1.0 / v0.1.1 / v0.2.0 / v0.2.1 指纹一致 |
 | 代码拉取路径是否正确 | 解析 GitHub tarball 顶层 | 单一顶层目录 `memo-role-main`，与 `fetchProject` 的假设一致 |
 
 **APK 仍未在真机或模拟器上运行过** —— 本环境没有 KVM，跑不了模拟器；

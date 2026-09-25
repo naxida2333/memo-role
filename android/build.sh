@@ -38,6 +38,9 @@ AJAR="$SDK/platforms/$PLATFORM/android.jar"
 BUILD="build"
 DIST="dist"
 KEYSTORE="debug.keystore"
+# 记录签名证书指纹，用于在构建期发现「密钥被换过」（见文件末尾的校验步骤）。
+# 这个文件要纳入版本管理；密钥本身（debug.keystore）不要。
+CERT_FILE="signing-cert.sha256"
 APK_NAME="memo-role-$VERSION_NAME.apk"
 
 for tool in aapt2 d8 zipalign apksigner; do
@@ -119,7 +122,7 @@ echo "==> 5/7 打包并字节对齐（zip + zipalign）"
 (cd "$BUILD/dex" && zip -q "../base.apk" classes.dex)
 "$BT/zipalign" -f -p 4 "$BUILD/base.apk" "$BUILD/aligned.apk"
 
-echo "==> 6/7 签名（apksigner）"
+echo "==> 6/7 准备签名密钥并校验指纹"
 if [ ! -f "$KEYSTORE" ]; then
   # 首次构建生成一把自签名调试密钥并保留：换了密钥，覆盖安装会因签名不一致失败
   keytool -genkeypair -keystore "$KEYSTORE" -alias androiddebugkey \
@@ -127,12 +130,63 @@ if [ ! -f "$KEYSTORE" ]; then
     -dname "CN=memo-role Debug, O=memo-role, C=CN" >/dev/null 2>&1
   echo "    已生成调试密钥 $KEYSTORE（请勿用于正式发布）"
 fi
+
+# ----------------------------------------------------------------------
+# 签名指纹校验
+#
+# 安装新版本时，安卓要求签名与已装版本一致，否则只能先卸载 —— 而卸载会连
+# 应用数据一起删掉（这里就是整个容器、依赖和模型，几个 GB）。所以密钥必须
+# 稳住：把指纹记在仓库里，密钥一变就立刻失败。
+#
+# 检查放在签名之前（直接读密钥文件），这样失败时 dist/ 里不会留下一个
+# 「看着像成品、其实装不上去」的 APK。
+#
+# 确实要换密钥时（换机器、密钥丢了）：删掉 signing-cert.sha256 重新生成，
+# 或用 ALLOW_KEY_CHANGE=1 临时放行；但要知道用户那次必须卸载重装。
+# ----------------------------------------------------------------------
+KEY_FPRINT="$(keytool -list -v -keystore "$KEYSTORE" -storepass android \
+  -alias androiddebugkey 2>/dev/null \
+  | grep -i 'SHA256:' | head -n 1 \
+  | sed 's/.*SHA256:[[:space:]]*//' | tr -d ':' | tr 'A-Z' 'a-z')"
+if [ -z "$KEY_FPRINT" ]; then
+  echo "无法读取密钥指纹，构建中止" >&2
+  exit 1
+fi
+EXPECTED=""
+[ -f "$CERT_FILE" ] && EXPECTED="$(tr -d ' \n' < "$CERT_FILE" | tr 'A-Z' 'a-z')"
+if [ -z "$EXPECTED" ]; then
+  printf '%s\n' "$KEY_FPRINT" > "$CERT_FILE"
+  echo "    已记录签名指纹到 $CERT_FILE：$KEY_FPRINT"
+elif [ "$EXPECTED" != "$KEY_FPRINT" ]; then
+  echo "" >&2
+  echo "!!! 签名密钥与仓库记录的不一致，构建中止 !!!" >&2
+  echo "    记录值：$EXPECTED" >&2
+  echo "    本次值：$KEY_FPRINT" >&2
+  echo "    用这把密钥签出的 APK 无法覆盖安装到旧版本上，只能卸载重装（数据会丢）。" >&2
+  echo "    先找回原来的 $KEYSTORE；确实要换密钥就删掉 $CERT_FILE 重新构建。" >&2
+  if [ "${ALLOW_KEY_CHANGE:-0}" != "1" ]; then
+    echo "    （临时放行：ALLOW_KEY_CHANGE=1 ./build.sh）" >&2
+    exit 1
+  fi
+  echo "    已按 ALLOW_KEY_CHANGE=1 放行，继续。" >&2
+else
+  echo "    密钥指纹与记录一致：$KEY_FPRINT"
+fi
+
+echo "==> 7/7 签名并校验产物"
 "$BT/apksigner" sign \
   --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
   --out "$DIST/$APK_NAME" "$BUILD/aligned.apk"
 
-echo "==> 7/7 校验"
-"$BT/apksigner" verify --print-certs "$DIST/$APK_NAME" | head -n 4
+# 再量一次成品：确认这个 APK 确实是上文那把密钥签的（防的是签错文件这类意外）
+APK_FPRINT="$("$BT/apksigner" verify --print-certs "$DIST/$APK_NAME" 2>/dev/null \
+  | grep 'SHA-256 digest' | head -n 1 | sed 's/.*: //' | tr -d ':' | tr 'A-Z' 'a-z')"
+if [ "$APK_FPRINT" != "$KEY_FPRINT" ]; then
+  echo "产物签名与密钥不符（密钥 $KEY_FPRINT / 产物 $APK_FPRINT），构建中止" >&2
+  exit 1
+fi
+echo "    产物签名已核验：$APK_FPRINT"
+
 "$BT/aapt2" dump badging "$DIST/$APK_NAME" | grep -E "^(package|application-label|launchable-activity|sdkVersion|targetSdkVersion)" || true
 
 ls -lh "$DIST/$APK_NAME"
