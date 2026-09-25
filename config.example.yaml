@@ -1,0 +1,85 @@
+# memo-role 配置示例
+#
+# 复制为 config.yaml 后按需修改：
+#   cp config.example.yaml config.yaml
+#
+# 所有相对路径都相对于项目根目录（本文件所在目录）。
+# 也可用环境变量覆盖任意字段：MEMO_ROLE_<段>__<字段>
+#   例：MEMO_ROLE_SERVER__PORT=9000
+#       MEMO_ROLE_INFERENCE__LLAMA_SERVER__PORT=9001
+
+server:
+  host: 127.0.0.1
+  port: 8000
+  reload: false
+
+storage:
+  db_path: data/memo_role.db
+
+# ----------------------------------------------------------------------
+# 三层记忆系统
+# ----------------------------------------------------------------------
+memory:
+  working_window: 12       # 注入模型的最近对话轮数
+  recall_top_k: 6          # 情节记忆召回条数
+  recall_min_score: 0.15   # 召回相似度下限
+  min_importance: 0.2      # 低于该重要度的信息不写入
+  embedding_backend: hashing   # hashing | llama_server | openai
+  embedding_dim: 256           # 仅 hashing 后端生效
+  extractor: rule              # rule | llm
+
+# ----------------------------------------------------------------------
+# 推理层
+# ----------------------------------------------------------------------
+inference:
+  backend: llama_server    # llama_server | llama_cpp | openai_api
+  model: ""                # 留空使用 models.catalog 中的默认条目
+  temperature: 0.8
+  top_p: 0.9
+  max_tokens: 512
+  n_ctx: 2048
+  n_threads: 2             # 低配 i3 / 安卓建议 2~4
+  n_gpu_layers: 0          # 0 = 纯 CPU
+  model_dir: models
+
+  # 后端 A：llama.cpp 的 llama-server 子进程（推荐，进程隔离、切模型方便）
+  llama_server:
+    bin_path: ""                       # 留空则在 PATH 中查找 llama-server
+    host: 127.0.0.1
+    port: 8081
+    startup_timeout: 120.0
+    extra_args: []                     # 例：["-fa", "--no-mmap"]
+
+  # 后端 C：OpenAI 兼容第三方 API（支持多密钥轮询）
+  openai:
+    base_url: https://api.openai.com/v1
+    model: gpt-4o-mini
+    api_keys: []            # 多个密钥会按顺序轮询，失败自动切换
+    timeout: 60.0
+    max_key_attempts: 0     # 0 = 等于密钥总数
+
+# ----------------------------------------------------------------------
+# 人设
+# ----------------------------------------------------------------------
+persona:
+  dir: data/personas
+  default_persona: default
+
+# ----------------------------------------------------------------------
+# 日志
+# ----------------------------------------------------------------------
+logging:
+  level: INFO
+  file: data/logs/memo_role.log
+  max_bytes: 1000000
+  backup_count: 3
+
+# ----------------------------------------------------------------------
+# NapCat（OneBot v11 反向 WebSocket）
+# ----------------------------------------------------------------------
+napcat:
+  enabled: false
+  ws_path: /onebot/v11/ws
+  access_token: ""          # 建议与 NapCat 侧保持一致
+  persona: default
+  admins: []

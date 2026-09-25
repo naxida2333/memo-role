@@ -1,0 +1,34 @@
+# memo-role 运行依赖
+#
+# 设计目标：依赖尽量少、体积小、纯 Python 优先（安卓 PRoot 上编译 C 扩展很容易失败）。
+
+# --- Web 层（对话页 / 管理后台 / 文件管理 / OneBot 反向 WebSocket）---
+fastapi>=0.110
+uvicorn[standard]>=0.27          # 含 websockets，OneBot v11 反向 WS 需要
+python-multipart>=0.0.9          # 文件上传
+
+# --- 配置与校验 ---
+pyyaml>=6.0
+pydantic>=2.6
+
+# --- HTTP 客户端（调用 llama-server / OpenAI 兼容 API）---
+httpx>=0.27
+
+# --- 向量计算 ---
+numpy>=1.26
+
+# --- 开发 / 测试 ---
+pytest>=8.0
+pytest-asyncio>=0.23
+
+# ----------------------------------------------------------------------
+# 可选依赖（按需手动安装，未列入默认安装以控制体积）
+#
+# 进程内加载 GGUF（backend: llama_cpp）：
+#   pip install llama-cpp-python
+#   注意：安卓 Termux / PRoot 下需自行编译，耗时且易失败，推荐改用
+#   llama-server 后端（backend: llama_server）。
+#
+# 模型下载（如需程序内下载 GGUF）：
+#   pip install huggingface_hub
+# ----------------------------------------------------------------------
