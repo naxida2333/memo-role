@@ -73,6 +73,11 @@ public class Container {
     private static final String LLAMA_DIR = "usr/local/lib/llama";
     private static final String LLAMA_BIN = "usr/local/bin/llama-server";
 
+    /** pkill 的等待上限；容器里 pkill 随 Ubuntu base 自带的 procps 就有。 */
+    private static final long PKILL_TIMEOUT_MS = 20000;
+    /** 等残留服务释放端口的上限。 */
+    private static final long PORT_FREE_TIMEOUT_MS = 10000;
+
     /**
      * llama-server 的入口脚本。
      *
@@ -115,6 +120,14 @@ public class Container {
     private final File projectDir;
 
     private Process service;
+
+    /**
+     * 端口上是否有人在应答（缓存值）。
+     *
+     * <p>取值前要先 {@link #probePort()}。之所以缓存而不是每次现探：界面刷新在主线程，
+     * 而探测是一次最长几秒的 HTTP 往返。
+     */
+    private volatile boolean portServing;
 
     public Container(Context ctx) {
         this.ctx = ctx.getApplicationContext();
@@ -630,8 +643,12 @@ public class Container {
     // 五、启停服务
     // ------------------------------------------------------------------
 
-    public void startService(final Log log) throws IOException {
-        stopService();
+    public void startService(final Log log) throws IOException, InterruptedException {
+        stopService(log);
+        // 端口上可能还蹲着一个「失联的旧服务」（见 killStaleServices）：新进程绑不上端口
+        // 会直接退出，而 waitForService 又能从旧进程拿到应答，于是界面显示「已就绪」，
+        // 实际跑的是旧代码 —— 必须先把端口腾出来。
+        ensurePortFree(log);
         File logFile = new File(logsDir, "service.log");
         List<String> cmd = prootCommand(
                 "cd /root/memo-role && exec python3 -m memo_role "
@@ -644,26 +661,45 @@ public class Container {
     }
 
     public void stopService() {
-        if (service == null) {
-            return;
-        }
-        service.destroy();
-        try {
-            if (!service.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+        stopService(null);
+    }
+
+    public void stopService(final Log log) {
+        if (service != null) {
+            service.destroy();
+            try {
+                if (!service.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                    service.destroyForcibly();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
                 service.destroyForcibly();
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            service.destroyForcibly();
+            service = null;
         }
-        service = null;
+        // 句柄可能早就没了（App 被系统回收过），但端口上还有人在应答 —— 那是残留进程
+        if (probePort()) {
+            killStaleServices(log);
+            try {
+                waitPortFree(PORT_FREE_TIMEOUT_MS, log);
+            } catch (InterruptedException e) {
+                // 停止服务没有「被打断」这种中间态可返回，恢复中断标记后按已停处理
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     /** 轮询 Web 端口，等到服务真的能响应为止。 */
-    public boolean waitForService(long timeoutMs, Log log, int port) throws InterruptedException {
+    public boolean waitForService(long timeoutMs, Log log) throws InterruptedException {
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < deadline) {
-            if (httpUp(port)) {
+            if (probePort()) {
+                // 刚起的进程已经退出、端口却仍有人应答：那是在跑的旧服务，不是我们这次的。
+                // 直接返回 true 会让用户对着「服务已就绪」用上旧代码（接口 404 / Not Found）。
+                if (service == null || !service.isAlive()) {
+                    log.log("端口 " + port() + " 上的应答不是刚启动的服务（旧进程没退干净）");
+                    return false;
+                }
                 return true;
             }
             if (service != null && !service.isAlive()) {
@@ -673,6 +709,75 @@ public class Container {
             Thread.sleep(500);
         }
         return false;
+    }
+
+    /**
+     * 探测端口上是否有人在应答，并更新缓存。
+     *
+     * <p>分成「探测」与「取值」两步：探测是一次真实的 HTTP 往返（最坏要几秒），
+     * 只能在后台线程做；界面每次刷新都要知道结果，读缓存就够了 ——
+     * 否则光刷新状态就会把界面卡住。
+     */
+    public boolean probePort() {
+        portServing = httpUp(port());
+        return portServing;
+    }
+
+    /** 端口上是否有人在应答（缓存值，见 {@link #probePort()}）。 */
+    public boolean isPortServing() {
+        return portServing;
+    }
+
+    /**
+     * 杀掉容器里所有还在跑的 memo-role 服务进程。
+     *
+     * <p>容器是 proot 起的，服务的真身其实是**宿主上的** python 进程。App 进程被
+     * 系统回收（或被杀）时 proot 来不及清理，python 就可能变成孤儿一直占着端口。
+     * 之后 App 重新起来点「启动服务」：新进程绑不上端口当场退出（uvicorn 报
+     * `address already in use`，退出码 3），而界面上 `waitForService` 又从那个孤儿
+     * 拿到应答，于是**磁盘上是新代码、在跑的是旧代码** —— 表现就是页面能开、点什么都
+     * 报 `Not Found`（接口不存在）。这种错很难从现象反推，所以宁可每次启停都清一遍。
+     *
+     * <p>pattern 里带方括号是为了**不误杀自己**：`pkill -f` 会拿每个进程（包括我们自己
+     * 这条命令所在的 shell）的命令行去匹配，而此刻我们的命令行里正含着 `memo[_-]role`
+     * 这个字面量 —— 它本身匹配不上该正则，所以不会自杀。
+     */
+    private void killStaleServices(final Log log) {
+        String out = exec("pkill -9 -f 'memo[_-]role' 2>/dev/null; exit 0", PKILL_TIMEOUT_MS);
+        if (log != null && out.trim().length() > 0) {
+            log.log(out.trim());
+        }
+    }
+
+    /** 端口上没人应答就直接返回；有人应答就清掉残留进程并等它释放。 */
+    private void ensurePortFree(final Log log) throws InterruptedException {
+        if (!probePort()) {
+            return;
+        }
+        if (log != null) {
+            log.log("端口 " + port() + " 上还有服务在应答，先清理残留进程…");
+        }
+        killStaleServices(log);
+        if (!waitPortFree(PORT_FREE_TIMEOUT_MS, log)) {
+            if (log != null) {
+                log.log("警告：端口 " + port() + " 仍被占用，启动可能失败");
+            }
+        }
+    }
+
+    /** 等端口不再应答（真释放了才返回 true）。 */
+    private boolean waitPortFree(long timeoutMs, final Log log) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            if (!probePort()) {
+                if (log != null) {
+                    log.log("端口 " + port() + " 已释放");
+                }
+                return true;
+            }
+            Thread.sleep(300);
+        }
+        return !probePort();
     }
 
     private boolean httpUp(int port) {
@@ -832,6 +937,13 @@ public class Container {
                         : "llama-server " + llama + " 已就绪")
                 .append('\n');
         sb.append("服务：").append(isServiceRunning() ? "运行中" : "未运行").append('\n');
+        // 端口有人应答却不是本 App 起的：多半是上次留下的旧服务，界面看着正常、
+        // 实际跑的是旧代码（点接口报 Not Found）。这里必须说出来，否则无从判断。
+        if (!isServiceRunning() && isPortServing()) {
+            sb.append("端口 ").append(port())
+                    .append("：有进程在应答，但不是本 App 启动的（可能是上次残留的服务，")
+                    .append("点「启动服务」会先清掉它）\n");
+        }
         sb.append("地址：").append(baseUrl());
         return sb.toString();
     }

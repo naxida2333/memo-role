@@ -17,6 +17,7 @@ from typing import Any, AsyncIterator, Optional
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import MutableHeaders
 
 from .. import __version__
 from ..files import (
@@ -110,13 +111,31 @@ def _register_api(app: FastAPI) -> None:
         app.include_router(module.router, prefix="/api")
 
 
+class _NoStoreStaticFiles(StaticFiles):
+    """静态资源一律禁用缓存。
+
+    前端是**无构建**的 HTML/JS，改完代码就是改这几个文件；浏览器（尤其是安卓
+    WebView）默认会按 Last-Modified 做启发式缓存，于是「服务已经是新代码、
+    页面还在跑上一版 JS」——表现是提示语、按钮行为都对不上，排查时极易误判成
+    后端坏了。这里统一加 ``no-store``，让每次加载都真的去取磁盘上的当前版本。
+    """
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        async def send_with_no_store(message: dict) -> None:
+            if message["type"] == "http.response.start":
+                MutableHeaders(scope=message)["Cache-Control"] = "no-store"
+            await send(message)
+
+        await super().__call__(scope, receive, send_with_no_store)
+
+
 def _register_pages(app: FastAPI) -> None:
     """页面与静态资源。
 
     前端是无构建步骤的原生 HTML/JS，直接由服务端提供：这样安卓 PRoot 上
     不需要 node，把项目目录拷过去就能跑。
     """
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    app.mount("/static", _NoStoreStaticFiles(directory=str(STATIC_DIR)), name="static")
 
     for route, filename in PAGES.items():
         app.get(route, include_in_schema=False)(
@@ -129,7 +148,8 @@ def _page_handler(filename: str):
 
     def handler() -> FileResponse:
         target = STATIC_DIR / filename
-        return FileResponse(target, media_type="text/html")
+        # 页面同样不缓存：缓存住 HTML 会连着它引用的旧 JS 一起用，见 _NoStoreStaticFiles
+        return FileResponse(target, media_type="text/html", headers={"Cache-Control": "no-store"})
 
     return handler
 

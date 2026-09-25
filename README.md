@@ -153,6 +153,15 @@ python -m memo_role --reload             # 开发用热重载
 「设置 → 更新代码」只重新下载项目代码并覆盖代码文件，**不动容器、不动模型、
 配置与聊天数据**，几秒到几十秒完成；服务在运行中的话会自动重启。
 
+> **重启不是可选项**：进程只在启动时读一次代码。代码换了而进程没换，就会出现
+> 「页面是新的、点什么都报 Not Found（接口不存在）」这种拧巴状态 —— 前端是静态
+> 文件、每次现取，接口却是启动时注册好的。所以更新代码、一键初始化都会强制重启，
+> 界面上也会把「端口上有人应答但不是本 App 启动的」这种残留状态明说出来。
+>
+> 页面与静态资源在服务端强制 `Cache-Control: no-store`，浏览器（尤其是安卓
+> WebView）不会拿旧 JS 出来顶替。于是**界面新而接口 404 = 服务还是旧进程**，
+> 这个判断是可靠的 —— 前端也会在 404 时直接把这句话提示出来。
+
 只有在容器本身出问题、或想彻底重来时，才需要「设置 → 重置」再走一遍
 「一键初始化」（那会重新下载容器与依赖，约 180 MB）。
 
@@ -176,7 +185,7 @@ Android 本身只拒绝 targetSdk < 23 的应用，28 在 Android 14/15 上可�
 ### 安装
 
 拷到手机点击安装（需允许「安装未知来源应用」），或
-`adb install -r android/dist/memo-role-0.3.0.apk`。
+`adb install -r android/dist/memo-role-0.3.2.apk`。
 
 ### 重新构建
 
@@ -222,6 +231,7 @@ python3 tools/vendor_llama.py --archive /path/to/llama-b11191-bin-ubuntu-arm64.t
 ```bash
 android/tests/check-runtime.sh   # 校验 proot 运行时是否齐全、形态是否能在安卓上跑
 android/tests/check-llama.sh     # 校验 llama-server 与它的 .so 是否齐全、能不能在容器里加载
+android/tests/check-service-supervision.sh   # 校验「清理残留服务」的 pattern 既不漏杀也不误杀
 android/tests/run.sh             # 校验自写的 tar 解压器（需要 JDK 11+ / python3 / GNU tar）
 ```
 
@@ -237,6 +247,12 @@ android/tests/run.sh             # 校验自写的 tar 解压器（需要 JDK 11
 二进制要求的 glibc 版本是否不超过容器自带的 2.39。
 带上 rootfs 路径（`./check-llama.sh /path/to/rootfs`）还能顺带确认那 11 个系统库
 确实存在于容器里。
+
+`check-service-supervision.sh` 从 `Container.java` 里**取出实际使用的那条 pkill
+pattern**（而不是另抄一份），再拿它去比对真实的服务命令行、proot 命令行与
+「执行这条命令的 shell 自己」：必须命中前者、必须放过后者。
+写死裸 pattern（`memo-role`）会连自己一起杀掉 —— 这个坑实测踩过，
+而这种「清理失败 / 自杀」在手机上只会表现为「服务起不来」，很难查，所以用脚本钉住。
 
 `run.sh` 用合成 tar.gz 分别喂给 `TarGz` 与系统 `tar`，逐项比对条目、类型、符号链接目标、
 内容摘要、权限位（含 setuid）与硬链接。覆盖 GNU 与 POSIX(pax) 两种打包格式，
@@ -257,8 +273,8 @@ android/tests/run.sh             # 校验自写的 tar 解压器（需要 JDK 11
   `ALLOW_KEY_CHANGE=1 ./build.sh` 临时放行。
 
 当前指纹：`0730afc2e31455e6d94e0950f2b931c93fa491b750fe3b92266c7b5db392d544`
-（v0.1.0 / v0.1.1 / v0.2.0 / v0.2.1 / v0.2.2 / v0.2.3 / v0.2.4 / v0.3.0 全部一致，
-可逐版覆盖安装）
+（v0.1.0 / v0.1.1 / v0.2.0 / v0.2.1 / v0.2.2 / v0.2.3 / v0.2.4 / v0.3.0 / v0.3.1 / v0.3.2
+全部一致，可逐版覆盖安装）
 
 ## 人工测试流程
 

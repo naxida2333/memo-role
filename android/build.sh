@@ -29,8 +29,8 @@ MIN_SDK="${MIN_SDK:-24}"
 # 代价：无法上架 Google Play（那里要求更高的 targetSdk），只能侧载安装；
 # 但 Android 只拒绝 targetSdk < 23 的应用，28 在 Android 14/15 上可正常安装。
 TARGET_SDK="${TARGET_SDK:-28}"
-VERSION_CODE="${VERSION_CODE:-8}"
-VERSION_NAME="${VERSION_NAME:-0.3.0}"
+VERSION_CODE="${VERSION_CODE:-10}"
+VERSION_NAME="${VERSION_NAME:-0.3.2}"
 JAVA_RELEASE="${JAVA_RELEASE:-11}"
 
 BT="$SDK/build-tools/$BUILD_TOOLS"

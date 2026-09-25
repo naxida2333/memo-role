@@ -25,7 +25,7 @@
 
   /**
    * 发送请求并返回解析后的数据。
-   * 非 2xx 时抛出 Error，message 取服务端 detail，便于直接展示给用户。
+   * 非 2xx 时抛出 Error，message 已翻成人能看懂的一句（见 describeError）。
    */
   async function request(method, url, body) {
     var opts = { method: method, headers: {} };
@@ -45,10 +45,27 @@
 
     var data = await readBody(res);
     if (!res.ok) {
-      var detail = data && (data.detail || data.message);
-      throw new Error(detail || ('请求失败（HTTP ' + res.status + '）'));
+      throw new Error(describeError(res, data));
     }
     return data;
+  }
+
+  /**
+   * 把失败响应翻成一句人能看懂的话。
+   *
+   * `detail` 为「Not Found」时特别注意：这是 FastAPI 在**路由本身不存在**时的默认
+   * 回复，和我们自己抛的 404（会写成「模型不存在」这类中文说明）不是一回事。
+   * 页面是静态文件、每次都现取，接口却是服务启动时就注册好的 —— 所以「新前端配旧后端」
+   * 时会出现页面能开、点什么都报 Not Found。这种情况不解释清楚，用户只会以为是坏了。
+   */
+  function describeError(res, data) {
+    var detail = data && (data.detail || data.message);
+    if (res.status === 404 && (!detail || detail === 'Not Found')) {
+      return '接口不存在（HTTP 404）：正在运行的服务比页面代码旧。'
+        + '请重启服务让新代码生效（安卓 App：「首页 → 停止服务 → 启动服务」；'
+        + '在手机上升级过的话，先点一次「设置 → 更新代码」）。';
+    }
+    return detail || ('请求失败（HTTP ' + res.status + '）');
   }
 
   MR.get = function (url) { return request('GET', url); };

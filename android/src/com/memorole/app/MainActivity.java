@@ -150,7 +150,7 @@ public class MainActivity extends Activity {
     private void runSetup() {
         if (container.isReady()) {
             log("环境已就绪，无需重复初始化。要更新代码请用「设置 → 更新代码」。");
-            startService();
+            startService(false);
             return;
         }
         btnSetup.setEnabled(false);
@@ -158,6 +158,10 @@ public class MainActivity extends Activity {
         log("开始初始化。首次需要下载约 30 MB 容器 + 安装 Python 依赖，请保持联网。");
 
         worker.execute(() -> {
+            // 初始化会重写代码，而旧服务是在重写之前启动的 —— 它已经把旧代码读进内存了，
+            // 磁盘再新也没用。所以结束时要**重启**而不是「已在跑就跳过」：
+            // 否则界面是新代码（静态文件每次现取），接口却还是旧的，点什么都报 Not Found。
+            final boolean wasServing = container.isServiceRunning() || container.probePort();
             try {
                 step("安装 proot 运行时", () -> {
                     if (!container.isRuntimeInstalled()) {
@@ -197,9 +201,12 @@ public class MainActivity extends Activity {
                 step("在容器内安装 Python 依赖", () -> container.runBootstrap(line -> log(line)));
 
                 log("初始化完成。");
+                if (wasServing) {
+                    log("服务原来就在跑，重启一次让新代码生效…");
+                }
                 ui.post(() -> {
                     refreshStatus();
-                    startService();
+                    startService(wasServing);
                 });
             } catch (Exception e) {
                 log("初始化失败：" + e.getMessage());
@@ -252,20 +259,34 @@ public class MainActivity extends Activity {
     // ------------------------------------------------------------------
 
     private void startService() {
+        startService(false);
+    }
+
+    /**
+     * @param restart 是否强制先停再起
+     *
+     * <p>「重启」这条路是给「代码刚被换掉」准备的：进程只会把代码读进内存一次，
+     * 磁盘上的文件变了它也不会知道。所以初始化/更新代码之后必须重启，
+     * 否则跑的还是旧接口 —— 界面能开、点什么都报 Not Found。
+     */
+    private void startService(final boolean restart) {
         if (!container.isReady()) {
             log("环境还没准备好，请先点「一键初始化」。");
             return;
         }
-        if (container.isServiceRunning()) {
+        if (!restart && container.isServiceRunning()) {
             openWeb(HOME_PAGE);
             return;
         }
         btnStart.setEnabled(false);
-        log("启动服务…");
+        log(restart ? "重启服务…" : "启动服务…");
         worker.execute(() -> {
             try {
+                if (restart) {
+                    container.stopService(line -> log(line));
+                }
                 container.startService(line -> log(line));
-                boolean up = container.waitForService(120000, line -> log(line), container.port());
+                boolean up = container.waitForService(120000, line -> log(line));
                 if (up) {
                     log("服务已就绪：" + container.baseUrl());
                     ui.post(() -> {
@@ -273,7 +294,8 @@ public class MainActivity extends Activity {
                         openWeb(HOME_PAGE);
                     });
                 } else {
-                    log("服务启动超时。请看「终端」页或管理后台的日志。");
+                    log("服务没起来。若状态里提示端口被占用，再点一次「启动服务」即可"
+                            + "（它会先清掉残留进程）。");
                     ui.post(() -> {
                         refreshStatus();
                         btnStart.setEnabled(true);
@@ -290,8 +312,9 @@ public class MainActivity extends Activity {
     }
 
     private void stopService() {
+        btnStop.setEnabled(false);
         worker.execute(() -> {
-            container.stopService();
+            container.stopService(line -> log(line));
             log("服务已停止。");
             ui.post(this::refreshStatus);
         });
@@ -392,13 +415,15 @@ public class MainActivity extends Activity {
         log("开始更新代码（只覆盖代码文件，模型与聊天数据不动）。");
         showBusy(true);
         worker.execute(() -> {
-            boolean wasRunning = container.isServiceRunning();
+            // 只要端口上有人在应答就要重启：可能本 App 早就丢了进程句柄（App 被回收过），
+            // 那个残留进程跑的是旧代码，不重启的话界面更新了、接口却一直报 Not Found
+            boolean wasRunning = container.isServiceRunning() || container.probePort();
             try {
                 container.updateProject(containerProgress());
                 log("代码已更新到最新。");
                 if (wasRunning) {
                     log("重启服务以生效…");
-                    container.stopService();
+                    container.stopService(line -> log(line));
                 }
                 ui.post(() -> {
                     showBusy(false);
@@ -439,18 +464,26 @@ public class MainActivity extends Activity {
 
     private void refreshStatus() {
         ui.post(() -> {
+            boolean running = container.isServiceRunning();
+            boolean ready = container.isReady();
+            // 端口探测结果整个方法里只取一次 —— 它是一次真实的 HTTP 往返，
+            // 而这段跑在主线程上（回环地址很快，但也没必要连探几遍）
+            boolean serving = !running && container.isPortServing();
+
             homeStatus.setText(container.statusSummary());
-            if (container.isServiceRunning()) {
+            if (running) {
                 statusPill.setText(getString(R.string.status_running, container.port()));
-            } else if (container.isReady()) {
+            } else if (ready) {
                 statusPill.setText(R.string.status_ready);
             } else {
                 statusPill.setText(R.string.status_not_ready);
             }
-            btnSetup.setEnabled(!container.isReady());
-            btnStart.setEnabled(container.isReady() && !container.isServiceRunning());
-            btnStop.setEnabled(container.isServiceRunning());
-            btnOpenWeb.setEnabled(container.isServiceRunning());
+            btnSetup.setEnabled(!ready);
+            // 端口被人占着时「启动服务」依然要能点：它会先清掉残留进程再启动
+            btnStart.setEnabled(ready && !running);
+            // 端口上有人在应答（哪怕是失联的旧服务）也要能点「停止服务」把它清掉
+            btnStop.setEnabled(running || serving);
+            btnOpenWeb.setEnabled(running || serving);
             webAddress.setText(container.baseUrl());
         });
     }

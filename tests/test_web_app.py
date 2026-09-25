@@ -28,6 +28,16 @@ def test_static_assets_are_served(web_client, asset: str) -> None:
     }
 
 
+@pytest.mark.parametrize("route", ["/", "/static/common.js"])
+def test_pages_and_assets_are_not_cached(web_client, route: str) -> None:
+    """页面与静态资源必须禁用缓存。
+
+    否则安卓 WebView 会继续用上一版 JS：服务端已经是新代码，界面上的提示语、
+    按钮行为却还是旧的（例如 404 只显示一句 Not Found，看不到排查说明）。
+    """
+    assert web_client.get(route).headers["cache-control"] == "no-store"
+
+
 # ----------------------------------------------------------------------
 # 系统
 # ----------------------------------------------------------------------
