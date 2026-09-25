@@ -33,7 +33,8 @@ memory:
 # ----------------------------------------------------------------------
 inference:
   backend: llama_server    # llama_server | llama_cpp | openai_api
-  model: ""                # 留空使用 models.catalog 中的默认条目
+  model: ""                # 留空使用内置模型目录的默认条目；
+                           # 可在 models/catalog.json 中覆盖下载源或追加自定义模型
   temperature: 0.8
   top_p: 0.9
   max_tokens: 512
