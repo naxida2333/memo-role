@@ -241,3 +241,8 @@ android/build/
 android/dist/
 # 自签名调试密钥：每台机器/每份克隆各自生成，不共享（换了密钥会导致覆盖安装失败）
 android/debug.keystore
+
+# 上面的 "*.so" 是给 Python 扩展用的，但 android/assets/proot/ 里的 .so 是
+# 必须随仓库分发的运行时依赖（缺了它 App 起不来容器），这里把它排除回来。
+# 注意：gitignore 是「后面的规则覆盖前面的」，所以这条必须放在末尾。
+!android/assets/proot/*.so
