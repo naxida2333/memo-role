@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与网页端 :root 主色保持一致，避免 App 外壳和页面看起来是两个东西 -->
+    <color name="accent">#4F6BED</color>
+    <color name="bg">#F4F5F7</color>
+    <color name="text">#1E2430</color>
+    <color name="muted">#6B7280</color>
+    <color name="danger">#D64545</color>
+    <color name="code_bg">#EEF0F4</color>
+</resources>

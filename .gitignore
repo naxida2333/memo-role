@@ -235,3 +235,9 @@ models/
 
 # 向量缓存等临时产物
 *.tmp
+
+# 安卓外壳的构建产物：APK 可用 android/build.sh 重新生成
+android/build/
+android/dist/
+# 自签名调试密钥：每台机器/每份克隆各自生成，不共享（换了密钥会导致覆盖安装失败）
+android/debug.keystore

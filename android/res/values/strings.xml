@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">memo-role</string>
+
+    <string name="action_refresh">刷新</string>
+    <string name="action_settings">设置</string>
+    <string name="action_connect">连接</string>
+    <string name="action_cancel">取消</string>
+    <string name="settings_title">服务地址</string>
+
+    <string name="setup_title">连接不上 memo-role 服务</string>
+    <string name="setup_hint">这个 App 只是外壳，服务需要先启动。在手机的 Termux 里执行：</string>
+    <string name="setup_commands">cd ~/memo-role\npip install -r requirements.txt\npython -m memo_role</string>
+    <string name="setup_address_label">服务地址</string>
+    <string name="setup_address_hint">http://127.0.0.1:8000</string>
+    <string name="setup_note">服务与 App 在同一台手机上时用 127.0.0.1，上面这条命令即可 —— 不加 --host 就不会把文件管理页暴露到局域网。\n服务跑在电脑上时，那边启动要加 --host 0.0.0.0，这里填那台电脑的局域网 IP（如 192.168.1.5:8000）。</string>
+
+    <string name="err_unreachable">连不上 %1$s\n%2$s</string>
+    <string name="err_empty_address">地址不能为空</string>
+    <string name="pick_file">选择文件</string>
+    <string name="pick_file_failed">打开文件选择器失败：%1$s</string>
+    <string name="downloading">正在下载 %1$s</string>
+    <string name="download_failed">下载失败：%1$s</string>
+</resources>

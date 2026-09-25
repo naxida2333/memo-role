@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  memo-role 安卓外壳：一个 WebView 容器。
+
+  它是「客户端」，不包含 Python 服务与模型 —— 服务仍在 Termux 里跑，
+  这个 APK 只负责把界面装进一个可点开的应用里（省掉浏览器输地址、
+  并补齐网页在 WebView 下容易坏的两件事：文件上传与下载）。
+
+  usesCleartextTraffic 必须为 true：本地服务是 http://，Android 9+ 默认禁止明文。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.memorole.app">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@style/AppTheme"
+        android:usesCleartextTraffic="true"
+        android:hardwareAccelerated="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
