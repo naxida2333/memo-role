@@ -66,6 +66,21 @@ def chat_ok(request: httpx.Request) -> httpx.Response:
     )
 
 
+def with_health(handler):
+    """让 /health 恒为 200，其余请求交给 handler。
+
+    chat / stream 会先 ``ensure_ready()``：健康探测通过就不会去拉子进程，
+    这样想测「推理请求本身出错」的用例才不会被启动流程干扰。
+    """
+
+    def wrapped(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(200)
+        return handler(request)
+
+    return wrapped
+
+
 # ----------------------------------------------------------------------
 # 启动参数
 # ----------------------------------------------------------------------
@@ -215,13 +230,15 @@ def test_chat_success_and_payload() -> None:
 
 
 def test_chat_http_error_raises_inference_error() -> None:
-    backend = make_backend(lambda r: httpx.Response(500, text="boom"))
+    backend = make_backend(with_health(lambda r: httpx.Response(500, text="boom")))
     with pytest.raises(InferenceError, match="500"):
         backend.chat([ChatMessage("user", "hi")])
 
 
 def test_chat_malformed_response_raises() -> None:
-    backend = make_backend(lambda r: httpx.Response(200, json={"unexpected": True}))
+    backend = make_backend(
+        with_health(lambda r: httpx.Response(200, json={"unexpected": True}))
+    )
     with pytest.raises(InferenceError, match="无法解析"):
         backend.chat([ChatMessage("user", "hi")])
 
@@ -246,8 +263,61 @@ def test_stream_yields_chunks() -> None:
 
 
 def test_stream_http_error_raises() -> None:
-    backend = make_backend(lambda r: httpx.Response(503, text="unavailable"))
+    backend = make_backend(with_health(lambda r: httpx.Response(503, text="unavailable")))
     with pytest.raises(InferenceError, match="503"):
+        list(backend.stream([ChatMessage("user", "hi")]))
+
+
+# ----------------------------------------------------------------------
+# 自动启动（chat / stream 会先确保后端就绪）
+# ----------------------------------------------------------------------
+def test_chat_auto_starts_server_when_health_fails(tmp_path: Path) -> None:
+    """health 不通时应自行拉起子进程，而不是甩一句 Connection refused。"""
+    model = tmp_path / "x.gguf"
+    model.write_bytes(b"fake-gguf")
+    state = {"health": 503}
+    started = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(state["health"])
+        return chat_ok(request)
+
+    def factory(args):
+        started.append(args)
+        state["health"] = 200  # 模拟子进程起来后 /health 变正常
+        return FakeProcess()
+
+    backend = LlamaServerBackend(
+        LlamaServerConfig(bin_path=sys.executable),
+        model_path=model,
+        client=make_client(handler),
+        process_factory=factory,
+    )
+    assert backend.chat([ChatMessage("user", "hi")]) == "你好呀"
+    # 拉起的是配置里的可执行文件，且把模型路径传给了它
+    assert started and started[0][0] == sys.executable
+    assert str(model) in started[0]
+
+
+def test_chat_reports_missing_model_file(tmp_path: Path) -> None:
+    """模型文件不存在时，报错要直接给出「缺哪个文件」，而不是启动超时。"""
+    backend = LlamaServerBackend(
+        LlamaServerConfig(bin_path=sys.executable),
+        model_path=tmp_path / "missing.gguf",
+        client=make_client(lambda r: httpx.Response(503)),
+    )
+    with pytest.raises(BackendUnavailableError, match="模型文件不存在"):
+        backend.chat([ChatMessage("user", "hi")])
+
+
+def test_stream_also_ensures_ready(tmp_path: Path) -> None:
+    backend = LlamaServerBackend(
+        LlamaServerConfig(bin_path=sys.executable),
+        model_path=tmp_path / "missing.gguf",
+        client=make_client(lambda r: httpx.Response(503)),
+    )
+    with pytest.raises(BackendUnavailableError, match="模型文件不存在"):
         list(backend.stream([ChatMessage("user", "hi")]))
 
 

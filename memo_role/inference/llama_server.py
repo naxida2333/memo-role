@@ -171,7 +171,11 @@ class LlamaServerBackend(ChatBackend):
         return resp.status_code == 200
 
     def ensure_ready(self) -> None:
-        """确保服务可用；未启动且允许自动启动时拉起子进程。"""
+        """确保服务可用；未启动且允许自动启动时拉起子进程。
+
+        :meth:`chat` / :meth:`stream` 都会先走这里 —— 否则第一次对话只会得到
+        「Connection refused」，用户根本不知道要去启动 llama-server。
+        """
         if self._ready:
             return
         if self._check_health():
@@ -181,8 +185,28 @@ class LlamaServerBackend(ChatBackend):
             raise BackendUnavailableError(
                 f"llama-server 未运行：{self.base_url}（已禁用自动启动）"
             )
+        self._require_model_file()
         self.start()
         self.wait_ready()
+
+    def _require_model_file(self) -> None:
+        """启动前确认模型文件存在。
+
+        少这一次检查的代价是：llama-server 会以一句难懂的报错退出，
+        或者白白等到启动超时。错误信息里必须带**完整路径**，
+        用户在手机上排查时只能照着这条路径去找文件。
+        """
+        if self.model_path is None:
+            raise BackendUnavailableError(
+                "未指定模型文件：请在管理后台「模型」页选择默认模型，"
+                "或把 GGUF 放入配置的模型目录"
+            )
+        if not self.model_path.exists():
+            raise BackendUnavailableError(
+                f"模型文件不存在：{self.model_path}。"
+                "请把 GGUF 下载到该路径（文件名需与模型目录登记的一致），"
+                "或在管理后台切换到一个已下载的模型"
+            )
 
     def stop(self) -> None:
         """终止子进程。"""
@@ -247,6 +271,7 @@ class LlamaServerBackend(ChatBackend):
         params: Optional[GenParams] = None,
     ) -> str:
         """非流式对话补全。"""
+        self.ensure_ready()
         payload = self._build_payload(messages, params, stream=False)
         try:
             resp = self._get_client().post("/v1/chat/completions", json=payload)
@@ -268,6 +293,7 @@ class LlamaServerBackend(ChatBackend):
         params: Optional[GenParams] = None,
     ) -> Iterator[str]:
         """流式对话补全（SSE）。"""
+        self.ensure_ready()
         payload = self._build_payload(messages, params, stream=True)
         try:
             with self._get_client().stream(
