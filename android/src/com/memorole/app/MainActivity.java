@@ -6,6 +6,7 @@ import android.app.DownloadManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
@@ -60,6 +61,16 @@ public class MainActivity extends Activity {
     private TextView addressLabel;
     private ValueCallback<Uri[]> fileCallback;
 
+    /**
+     * 本次导航的主文档是否加载失败。
+     *
+     * 必须自己记这个状态：WebView 在加载失败时**也会**回调 onPageFinished
+     * （它把自带的错误页当作一个「加载完成」的页面），于是「显示引导页」会紧跟着
+     * 被「收起引导页」抹掉 —— 表现就是用户只看到裸的错误页，看不到我们写的
+     * 「服务要先启动」。onPageStarted 里重置，保证重试成功时能正常收起。
+     */
+    private boolean loadFailed;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -85,9 +96,17 @@ public class MainActivity extends Activity {
 
         web.setWebViewClient(new WebViewClient() {
             @Override
+            public void onPageStarted(WebView view, String url, Bitmap favicon) {
+                // 新一轮导航开始：先清掉上一轮的失败标记，否则失败一次后再也收不起引导页
+                loadFailed = false;
+            }
+
+            @Override
             public void onPageFinished(WebView view, String url) {
-                // 页面真的开始渲染了才收起引导页，避免闪一下又切回来
-                hideSetup();
+                // 失败时不能收：这个回调在错误页上同样会触发（详见 loadFailed 的说明）
+                if (!loadFailed) {
+                    hideSetup();
+                }
                 updateAddressLabel(url);
             }
 
@@ -95,6 +114,7 @@ public class MainActivity extends Activity {
             public void onReceivedError(WebView view, WebResourceRequest request,
                                         WebResourceError error) {
                 if (request != null && request.isForMainFrame()) {
+                    loadFailed = true;
                     showSetup(getString(R.string.err_unreachable, baseUrl(), describe(error)));
                 }
             }

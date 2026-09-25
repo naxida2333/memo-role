@@ -99,23 +99,52 @@ python -m memo_role --reload             # 开发用热重载
 省掉「打开浏览器输地址」，并补齐了网页在 WebView 下默认会坏的两件事 ——
 文件管理页的**上传**与**下载**（不实现的话点了没反应）。
 
-**它不是「自带 Python 的独立 App」**：服务与模型仍在 Termux 里跑，APK 只是客户端。
+**它不是「自带 Python 的独立 App」**：Python 服务与模型需要**单独运行**，APK 只是客户端。
 之所以不做成独立 App：Web 层依赖 fastapi + pydantic v2，后者含 Rust 编写的
 `pydantic-core`，要为安卓交叉编译原生扩展，成本远高于收益。
 
-### 使用（服务与 App 在同一台手机上）
+### 使用：服务跑在哪台机器上？
 
-1. Termux 里启动服务（**不需要** `--host 0.0.0.0`，同一台手机走 127.0.0.1 即可，
-   这样也不会把文件管理页暴露到局域网）：
+**方式一 · 服务跑在电脑上（最省事，也最容易排查）**
+
+1. 电脑上启动服务，加 `--host 0.0.0.0` 让手机能连进来：
    ```bash
-   python -m memo_role
+   pip install -r requirements.txt
+   python -m memo_role --host 0.0.0.0
    ```
-2. 安装 APK（拷到手机点击安装，或 `adb install -r android/dist/memo-role-0.1.0.apk`）。
-3. 打开 App：默认就连 `http://127.0.0.1:8000`；连不上时会显示引导页，
-   上面直接写着要在 Termux 里执行的命令。
+2. 查电脑的局域网 IP，在 App 的「设置」里填 `192.168.1.5:8000` 这样的地址。
+3. 电脑防火墙需允许 Python 通过专用网络，否则手机会一直连不上。
 
-服务跑在电脑上时：启动时加 `--host 0.0.0.0`，在 App 里把地址改成那台电脑的
-局域网 IP（如 `192.168.1.5:8000`）。
+**方式二 · 服务与 App 在同一台手机上**
+
+⚠️ 这里有个坑：**直接在 Termux 里 `pip install -r requirements.txt` 会失败**。
+`pydantic-core` 只发布 glibc（manylinux / musllinux）版本的安装包，而 Termux 用的是
+Bionic libc，pip 找不到匹配的轮子，会转去从源码编译 Rust 扩展 —— 慢，且经常编不过。
+
+所以要在 **proot 里的 Ubuntu**（真正的 glibc 环境）中运行：
+
+```bash
+# 在 Termux 里
+pkg install proot-distro
+proot-distro install ubuntu
+proot-distro login ubuntu
+
+# 以下在 Ubuntu 里执行（Termux 的家目录被绑定在同一路径）
+cd /data/data/com.termux/files/home/memo-role
+apt update; apt install -y python3-pip
+pip install -r requirements.txt
+python -m memo_role          # 不需要 --host 0.0.0.0
+```
+
+App 默认就连 `http://127.0.0.1:8000`。不加 `--host` 也就不会把文件管理页暴露到局域网。
+
+> 真机上的内存与首字延迟还没有实测数据；跑真实模型时 `llama-server` 需要
+> llama.cpp 的安卓构建版本，或在 proot 里自行编译。
+
+### 安装 APK
+
+拷到手机点击安装（需允许「安装未知来源应用」），或 `adb install -r android/dist/memo-role-0.1.1.apk`。
+连不上服务时会显示引导页，上面直接写着上面这些命令。
 
 ### 重新构建
 
