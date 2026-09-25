@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>memo-role · 文件管理</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="page">
+  <div class="page-head">
+    <h1 style="font-size:18px;margin:0">文件管理</h1>
+    <span class="spacer"></span>
+    <span id="nav"></span>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <div class="crumbs" id="crumbs"></div>
+    </div>
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn btn-sm" id="btn-newdir">新建文件夹</button>
+      <button class="btn btn-sm" id="btn-newfile">新建文件</button>
+      <label class="btn btn-sm" for="upload-input" style="cursor:pointer">上传文件</label>
+      <input type="file" id="upload-input" hidden>
+      <button class="btn btn-sm btn-ghost" id="btn-refresh">刷新</button>
+      <span class="hint" id="sandbox-note"></span>
+    </div>
+
+    <div class="hint" id="truncated-note" hidden>目录条目过多，仅显示前 1000 项。</div>
+
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>名称</th><th>类型</th><th>大小</th><th>修改时间</th><th>状态</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="file-tbody"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="file-empty" hidden>这个目录是空的</div>
+  </div>
+</div>
+
+<script src="/static/common.js"></script>
+<script>
+/* 文件管理逻辑：沙箱内相对路径的浏览 / 编辑 / 上传 / 删除。 */
+(function () {
+  'use strict';
+
+  var $ = function (id) { return document.getElementById(id); };
+  var currentPath = '';
+  var meta = null;
+
+  document.addEventListener('DOMContentLoaded', init);
+
+  function init() {
+    $('nav').innerHTML = MR.headerNav('/files');
+    $('btn-refresh').addEventListener('click', function () { loadDir(currentPath); });
+    $('btn-newdir').addEventListener('click', newDir);
+    $('btn-newfile').addEventListener('click', newFile);
+    $('upload-input').addEventListener('change', onUpload);
+    $('file-tbody').addEventListener('click', onRowClick);
+    $('crumbs').addEventListener('click', onCrumbClick);
+    loadMeta();
+    loadDir('');
+  }
+
+  // ----------------------------------------------------------------
+  // 沙箱信息
+  // ----------------------------------------------------------------
+  async function loadMeta() {
+    try {
+      meta = await MR.get('/api/files/meta');
+      var protectedList = (meta.protected || []).map(shortPath).join('、');
+      $('sandbox-note').textContent = '沙箱根目录：' + meta.root +
+        '（上传上限 ' + MR.fmtBytes(meta.max_upload_bytes) +
+        '，在线编辑上限 ' + MR.fmtBytes(meta.max_text_bytes) + '）' +
+        (protectedList ? '｜受保护：' + protectedList : '');
+    } catch (err) {
+      $('sandbox-note').textContent = '沙箱信息加载失败：' + err.message;
+    }
+  }
+
+  function shortPath(p) {
+    if (!meta || !meta.root) return p;
+    var rel = String(p).indexOf(meta.root) === 0 ? String(p).slice(meta.root.length) : p;
+    return rel || '/';
+  }
+
+  // ----------------------------------------------------------------
+  // 目录浏览
+  // ----------------------------------------------------------------
+  async function loadDir(path) {
+    try {
+      var data = await MR.get('/api/files/list' + MR.qs({ path: path }));
+      currentPath = data.path || '';
+      renderCrumbs(currentPath);
+      renderEntries(data.entries || []);
+      $('truncated-note').hidden = !data.truncated;
+    } catch (err) {
+      $('file-tbody').innerHTML = '<tr><td colspan="6" class="hint">加载失败：' + MR.escape(err.message) + '</td></tr>';
+      $('file-empty').hidden = true;
+    }
+  }
+
+  function renderCrumbs(path) {
+    var html = ['<span class="crumb' + (path ? '' : ' current') + '" data-path="">项目根目录</span>'];
+    var acc = '';
+    (path ? path.split('/') : []).forEach(function (part, i, arr) {
+      acc = acc ? acc + '/' + part : part;
+      var last = i === arr.length - 1;
+      html.push('<span class="sep">/</span>');
+      html.push('<span class="crumb' + (last ? ' current' : '') + '" data-path="' + MR.escape(acc) + '">' +
+        MR.escape(part) + '</span>');
+    });
+    $('crumbs').innerHTML = html.join('');
+  }
+
+  function renderEntries(entries) {
+    $('file-empty').hidden = entries.length > 0;
+    $('file-tbody').innerHTML = entries.map(function (en) {
+      var isDir = en.type === 'dir';
+      var status = en.protected
+        ? '<span class="badge badge-danger">受保护</span>'
+        : (en.editable ? '<span class="badge badge-ok">可编辑</span>' : '<span class="badge">只读</span>');
+      var disableWrite = en.protected ? ' disabled title="受保护文件，不可修改或删除"' : '';
+      var actions = [
+        '<button class="btn btn-sm btn-ghost" data-act="edit"' + (en.editable ? '' : ' disabled title="不可在线编辑"') + '>编辑</button>',
+        isDir ? '' : '<button class="btn btn-sm btn-ghost" data-act="download">下载</button>',
+        '<button class="btn btn-sm btn-ghost" data-act="rename"' + disableWrite + '>重命名</button>',
+        '<button class="btn btn-sm btn-danger" data-act="del"' + disableWrite + '>删除</button>'
+      ].join('');
+      return '<tr data-path="' + MR.escape(en.path) + '" data-type="' + MR.escape(en.type) + '">' +
+        '<td>' + (isDir
+          ? '<span class="crumb" data-act="enter">📁 ' + MR.escape(en.name) + '</span>'
+          : '<span class="mono">' + MR.escape(en.name) + '</span>') + '</td>' +
+        '<td>' + (isDir ? '目录' : '文件') + '</td>' +
+        '<td class="mono">' + (isDir ? '-' : MR.fmtBytes(en.size)) + '</td>' +
+        '<td class="mono">' + MR.escape(MR.fmtTime(en.mtime)) + '</td>' +
+        '<td>' + status + '</td>' +
+        '<td><div class="row">' + actions + '</div></td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  function onCrumbClick(e) {
+    var crumb = e.target.closest('.crumb');
+    if (!crumb) return;
+    loadDir(crumb.getAttribute('data-path') || '');
+  }
+
+  async function onRowClick(e) {
+    var tr = e.target.closest('tr');
+    if (!tr) return;
+    var path = tr.getAttribute('data-path');
+    var isDir = tr.getAttribute('data-type') === 'dir';
+    var btn = e.target.closest('[data-act]');
+    var act = btn ? btn.getAttribute('data-act') : null;
+
+    if (act === 'enter') { loadDir(path); return; }
+    if (act === 'edit') { openEditor(path); return; }
+    if (act === 'download') { download(path); return; }
+    if (act === 'rename') { rename(path); return; }
+    if (act === 'del') { remove(path, isDir); return; }
+    // 点击文件名：目录进入，文件按可编辑性打开编辑
+    if (!btn && isDir && e.target.closest('span')) loadDir(path);
+  }
+
+  // ----------------------------------------------------------------
+  // 操作
+  // ----------------------------------------------------------------
+  function joinPath(dir, name) {
+    return dir ? dir + '/' + name : name;
+  }
+
+  function newDir() {
+    var name = window.prompt('新建文件夹名称（相对当前目录）', '');
+    if (!name) return;
+    var path = joinPath(currentPath, name.trim());
+    MR.post('/api/files/dir', { path: path }).then(function () {
+      MR.toast('已创建 ' + path, 'success');
+      loadDir(currentPath);
+    }).catch(function (err) { MR.toast(err.message, 'error'); });
+  }
+
+  /** 新建文本文件：直接打开空编辑器，保存时才真正落盘（服务端会建父目录）。 */
+  function newFile() {
+    var name = window.prompt('新建文件名（相对当前目录）', '');
+    if (!name) return;
+    openEditor(joinPath(currentPath, name.trim()), true);
+  }
+
+  function onUpload(e) {
+    var file = e.target.files && e.target.files[0];
+    if (!file) return;
+    var form = new FormData();
+    form.append('dir', currentPath);
+    form.append('file', file);
+    MR.upload('/api/files/upload', form).then(function () {
+      MR.toast('已上传 ' + file.name, 'success');
+      loadDir(currentPath);
+    }).catch(function (err) {
+      MR.toast(err.message, 'error');
+    }).finally(function () {
+      e.target.value = '';
+    });
+  }
+
+  function download(path) {
+    var a = document.createElement('a');
+    a.href = '/api/files/download' + MR.qs({ path: path });
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  function rename(path) {
+    var next = window.prompt('新的相对路径', path);
+    if (next === null) return;
+    next = next.trim();
+    if (!next || next === path) return;
+    MR.post('/api/files/rename', { path: path, new_path: next }).then(function () {
+      MR.toast('已重命名为 ' + next, 'success');
+      loadDir(currentPath);
+    }).catch(function (err) { MR.toast(err.message, 'error'); });
+  }
+
+  async function remove(path, isDir) {
+    var ok = await MR.confirm(
+      '确定删除' + (isDir ? '目录' : '文件') + '「' + path + '」？' +
+      (isDir ? '目录会递归删除。' : ''),
+      { danger: true, title: '删除' }
+    );
+    if (!ok) return;
+    try {
+      await MR.del('/api/files' + MR.qs({ path: path }));
+      MR.toast('已删除 ' + path, 'success');
+      loadDir(currentPath);
+    } catch (err) {
+      MR.toast(err.message, 'error');
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // 编辑器
+  // ----------------------------------------------------------------
+  /** 打开编辑器；isNew 为 true 时不读取内容，保存时创建文件。 */
+  async function openEditor(path, isNew) {
+    var mask = MR.openModal({
+      title: (isNew ? '新建 · ' : '编辑 · ') + path,
+      bodyHtml: '<div class="hint" id="ed-meta">加载中…</div>' +
+        '<textarea class="editor-area mono" id="ed-text" spellcheck="false"></textarea>',
+      footHtml: '<span class="hint" id="ed-size" style="margin-right:auto"></span>' +
+        '<button class="btn btn-ghost" data-close="1">关闭</button>' +
+        '<button class="btn btn-primary" id="ed-save">保存</button>'
+    });
+    var textarea = mask.querySelector('#ed-text');
+
+    if (isNew) {
+      mask.querySelector('#ed-meta').textContent =
+        '新文件：' + path + '（保存后创建；若已有同名文件会被覆盖）';
+      textarea.focus();
+    } else {
+      try {
+        var data = await MR.get('/api/files/content' + MR.qs({ path: path }));
+        textarea.value = data.content || '';
+        mask.querySelector('#ed-meta').textContent = '路径：' + data.path;
+        mask.querySelector('#ed-size').textContent = '字节数：' + data.size;
+      } catch (err) {
+        mask.querySelector('#ed-meta').textContent = '读取失败：' + err.message;
+        textarea.disabled = true;
+        mask.querySelector('#ed-save').disabled = true;
+      }
+    }
+
+    mask.querySelector('#ed-save').addEventListener('click', async function () {
+      try {
+        var entry = await MR.put('/api/files/content', { path: path, content: textarea.value });
+        mask.querySelector('#ed-size').textContent = '字节数：' + entry.size;
+        MR.toast('已保存 ' + path, 'success');
+        loadDir(currentPath);
+        // 新建完成后关掉弹窗：标题里的「新建」已经不成立了，留着容易误以为没保存
+        if (isNew) mask.close();
+      } catch (err) {
+        // 413 / 400 等错误由 MR 抛出 detail 文本
+        MR.toast(err.message, 'error');
+      }
+    });
+  }
+})();
+</script>
+</body>
+</html>

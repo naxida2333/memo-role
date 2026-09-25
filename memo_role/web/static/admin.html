@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>memo-role · 管理后台</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="page">
+  <div class="page-head">
+    <h1 style="font-size:18px;margin:0">memo-role 管理后台</h1>
+    <span class="spacer"></span>
+    <span id="nav"></span>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-tab="overview">概览</button>
+    <button class="tab" data-tab="persona">人设</button>
+    <button class="tab" data-tab="memory">记忆</button>
+    <button class="tab" data-tab="model">模型</button>
+    <button class="tab" data-tab="policy">对话策略</button>
+  </div>
+
+  <!-- 概览 -->
+  <section class="tab-panel active" id="panel-overview">
+    <div class="panel">
+      <div class="panel-head">
+        <h2>系统状态</h2>
+        <span class="spacer"></span>
+        <button class="btn btn-sm btn-ghost" id="status-refresh">刷新</button>
+      </div>
+      <pre class="mono box" id="status-box">加载中…</pre>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>日志</h2>
+        <span class="spacer"></span>
+        <label class="field-inline">行数
+          <select id="log-lines" class="input-sm">
+            <option value="100">100</option>
+            <option value="200" selected>200</option>
+            <option value="500">500</option>
+            <option value="1000">1000</option>
+          </select>
+        </label>
+        <button class="btn btn-sm btn-ghost" id="logs-refresh">刷新</button>
+      </div>
+      <div class="hint mono" id="log-path"></div>
+      <pre class="mono box" id="log-box"></pre>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>配置</h2>
+        <span class="spacer"></span>
+        <button class="btn btn-sm btn-ghost" id="config-refresh">刷新</button>
+      </div>
+      <pre class="mono box" id="config-box"></pre>
+    </div>
+  </section>
+
+  <!-- 人设 -->
+  <section class="tab-panel" id="panel-persona">
+    <div class="panel">
+      <div class="panel-head">
+        <h2>人设（<span id="persona-count">0</span>）</h2>
+        <span class="spacer"></span>
+        <button class="btn btn-sm btn-primary" id="persona-new">新建</button>
+        <button class="btn btn-sm btn-ghost" id="persona-import">导入</button>
+        <button class="btn btn-sm btn-ghost" id="persona-export">导出</button>
+        <button class="btn btn-sm btn-ghost" id="persona-refresh">刷新</button>
+      </div>
+      <div class="hint">全局默认人设：<span class="mono" id="persona-default">-</span></div>
+      <div class="cards" id="persona-cards" style="margin-top:10px"></div>
+    </div>
+  </section>
+
+  <!-- 记忆 -->
+  <section class="tab-panel" id="panel-memory">
+    <div class="panel">
+      <div class="panel-head"><h2>记忆</h2><span class="spacer"></span><span class="hint" id="mem-mode">列表模式</span></div>
+      <div class="filter-bar">
+        <label class="field-inline">类型
+          <select id="mem-kind" class="input-sm">
+            <option value="">全部</option>
+            <option value="core">core</option>
+            <option value="episodic">episodic</option>
+          </select>
+        </label>
+        <label class="field-inline">关键词
+          <input id="mem-query" class="input-sm" placeholder="内容模糊匹配 / 语义检索">
+        </label>
+        <label class="field-inline">条数
+          <select id="mem-limit" class="input-sm">
+            <option value="20">20</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+        </label>
+        <button class="btn btn-sm btn-ghost" id="mem-load">刷新列表</button>
+        <button class="btn btn-sm btn-primary" id="mem-search">检索</button>
+        <button class="btn btn-sm btn-ghost" id="mem-back" hidden>返回列表</button>
+      </div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>ID</th><th>类型</th><th>重要度</th><th>内容</th>
+              <th>发言人</th><th>会话</th><th>访问</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="mem-tbody"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="mem-empty" hidden>暂无记忆</div>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>统计</h2>
+        <span class="spacer"></span>
+        <button class="btn btn-sm btn-ghost" id="mem-stats-refresh">刷新</button>
+      </div>
+      <div class="kv" id="mem-stats"></div>
+    </div>
+  </section>
+
+  <!-- 模型 -->
+  <section class="tab-panel" id="panel-model">
+    <div class="panel">
+      <div class="panel-head">
+        <h2>当前后端</h2>
+        <span class="spacer"></span>
+        <button class="btn btn-sm btn-ghost" id="model-refresh">刷新</button>
+      </div>
+      <div class="kv" id="model-current"></div>
+      <p class="hint" style="margin-top:8px">注意：切换默认模型会立即重载本地模型，可能耗时较久。</p>
+      <pre class="mono box" id="model-result" hidden></pre>
+    </div>
+    <div class="panel">
+      <h2>可用模型</h2>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>ID</th><th>名称</th><th>参数量</th><th>量化</th>
+              <th>大小</th><th>文件</th><th>状态</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="model-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- 对话策略 -->
+  <section class="tab-panel" id="panel-policy">
+    <div class="panel">
+      <div class="panel-head"><h2>对话策略（热更）</h2></div>
+      <p class="hint">以下几项修改后立即生效并写入运行时设置，无需重启。</p>
+      <div class="form-row" style="margin-top:10px">
+        <div class="field">
+          <label for="pol-prob">群聊随机接话概率（0 ~ 1）</label>
+          <input type="number" id="pol-prob" min="0" max="1" step="0.01" value="0">
+        </div>
+        <div class="field">
+          <label>被叫到时必回</label>
+          <label class="field-inline"><input type="checkbox" id="pol-mentioned" style="width:auto"> 是</label>
+        </div>
+        <div class="field">
+          <label>群聊发言加昵称前缀</label>
+          <label class="field-inline"><input type="checkbox" id="pol-label" style="width:auto"> 是</label>
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn btn-primary" id="pol-save">保存</button>
+        <span class="hint" id="pol-result"></span>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script src="/static/common.js"></script>
+<script>
+/* 管理后台逻辑：五个客户端标签页，无前端路由。 */
+(function () {
+  'use strict';
+
+  var $ = function (id) { return document.getElementById(id); };
+  var personasCache = [];
+  var defaultPersona = '';
+  var memMode = 'list';
+  var statusCache = null;
+
+  document.addEventListener('DOMContentLoaded', init);
+
+  function init() {
+    $('nav').innerHTML = MR.headerNav('/admin');
+    $('tabs').addEventListener('click', function (e) {
+      var tab = e.target.closest('.tab');
+      if (tab) activateTab(tab.getAttribute('data-tab'));
+    });
+    bindOverview();
+    bindPersona();
+    bindMemory();
+    bindModel();
+    bindPolicy();
+    activateTab('overview');
+  }
+
+  function activateTab(name) {
+    Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (t) {
+      t.classList.toggle('active', t.getAttribute('data-tab') === name);
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.tab-panel'), function (p) {
+      p.classList.remove('active');
+    });
+    var panel = $('panel-' + name);
+    if (panel) panel.classList.add('active');
+    if (name === 'overview') { loadStatus(); loadLogs(); loadConfig(); }
+    else if (name === 'persona') loadPersonas();
+    else if (name === 'memory') { loadMemories(); loadStats(); }
+    else if (name === 'model') loadModels();
+    else if (name === 'policy') loadStatus(true);
+  }
+
+  // ================================================================
+  // 概览
+  // ----------------------------------------------------------------
+  function bindOverview() {
+    $('status-refresh').addEventListener('click', loadStatus);
+    $('logs-refresh').addEventListener('click', loadLogs);
+    $('log-lines').addEventListener('change', loadLogs);
+    $('config-refresh').addEventListener('click', loadConfig);
+  }
+
+  async function loadStatus(forPolicy) {
+    try {
+      statusCache = await MR.get('/api/system/status');
+      $('status-box').textContent = JSON.stringify(statusCache, null, 2);
+      if (forPolicy) prefillPolicy(statusCache);
+    } catch (err) {
+      $('status-box').textContent = '加载失败：' + err.message;
+    }
+  }
+
+  async function loadLogs() {
+    var lines = $('log-lines').value;
+    try {
+      var data = await MR.get('/api/system/logs' + MR.qs({ lines: lines }));
+      $('log-path').textContent = data.exists
+        ? (data.path + '（' + MR.fmtBytes(data.size) + '）')
+        : ('日志文件不可用：' + (data.path || '未配置'));
+      $('log-box').textContent = (data.lines && data.lines.length) ? data.lines.join('\n') : '（暂无日志）';
+    } catch (err) {
+      $('log-box').textContent = '加载失败：' + err.message;
+    }
+  }
+
+  async function loadConfig() {
+    try {
+      var data = await MR.get('/api/system/config');
+      $('config-box').textContent = JSON.stringify(data, null, 2);
+    } catch (err) {
+      $('config-box').textContent = '加载失败：' + err.message;
+    }
+  }
+
+  // ================================================================
+  // 人设
+  // ----------------------------------------------------------------
+  function bindPersona() {
+    $('persona-refresh').addEventListener('click', loadPersonas);
+    $('persona-new').addEventListener('click', function () { openPersonaForm(null); });
+    $('persona-export').addEventListener('click', exportPersonas);
+    $('persona-import').addEventListener('click', openImport);
+    $('persona-cards').addEventListener('click', onPersonaAction);
+  }
+
+  async function loadPersonas() {
+    try {
+      var data = await MR.get('/api/personas');
+      personasCache = data.personas || [];
+      defaultPersona = data.default || '';
+      renderPersonas();
+    } catch (err) {
+      $('persona-cards').innerHTML = '<div class="empty">加载失败：' + MR.escape(err.message) + '</div>';
+    }
+  }
+
+  function renderPersonas() {
+    $('persona-count').textContent = personasCache.length;
+    $('persona-default').textContent = defaultPersona || '（未设置）';
+    if (!personasCache.length) {
+      $('persona-cards').innerHTML = '<div class="empty">还没有人设，点「新建」创建一个。</div>';
+      return;
+    }
+    $('persona-cards').innerHTML = personasCache.map(function (p) {
+      var isDefault = p.id === defaultPersona;
+      return '<div class="card" data-id="' + MR.escape(p.id) + '">' +
+        '<div class="card-head">' +
+          '<div class="card-avatar">' + avatarHTML(p.avatar) + '</div>' +
+          '<div style="flex:1;min-width:0">' +
+            '<div class="card-title">' + MR.escape(p.name || '(未命名)') +
+              (isDefault ? ' <span class="badge badge-accent">默认</span>' : '') + '</div>' +
+            '<div class="hint mono">' + MR.escape(p.id) + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="card-desc">' + MR.escape(p.description || '（无简介）') + '</div>' +
+        '<div class="row">' + (p.tags || []).map(function (t) {
+          return '<span class="badge">' + MR.escape(t) + '</span>';
+        }).join('') + '</div>' +
+        '<div class="card-actions">' +
+          '<button class="btn btn-sm" data-act="edit">编辑</button>' +
+          '<button class="btn btn-sm" data-act="dup">复制</button>' +
+          '<button class="btn btn-sm" data-act="default"' + (isDefault ? ' disabled' : '') + '>设为默认</button>' +
+          '<button class="btn btn-sm btn-danger" data-act="del">删除</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  function avatarHTML(avatar) {
+    var value = avatar || '🙂';
+    if (/^(https?:|data:|\/)/.test(String(value))) {
+      return '<img src="' + MR.escape(value) + '" alt="">';
+    }
+    return MR.escape(value);
+  }
+
+  async function onPersonaAction(e) {
+    var btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    var card = e.target.closest('.card');
+    if (!card) return;
+    var id = card.getAttribute('data-id');
+    var act = btn.getAttribute('data-act');
+    if (act === 'edit') {
+      try {
+        var full = await MR.get('/api/personas/' + encodeURIComponent(id));
+        openPersonaForm(full);
+      } catch (err) { MR.toast(err.message, 'error'); }
+    } else if (act === 'dup') {
+      try {
+        await MR.post('/api/personas/' + encodeURIComponent(id) + '/duplicate', {});
+        MR.toast('已复制', 'success');
+        loadPersonas();
+      } catch (err) { MR.toast(err.message, 'error'); }
+    } else if (act === 'default') {
+      try {
+        var res = await MR.post('/api/personas/' + encodeURIComponent(id) + '/default', {});
+        MR.toast('默认人设已设为「' + (res.name || id) + '」', 'success');
+        loadPersonas();
+      } catch (err) { MR.toast(err.message, 'error'); }
+    } else if (act === 'del') {
+      var ok = await MR.confirm('确定删除人设「' + id + '」？该操作不可撤销。', { danger: true, title: '删除人设' });
+      if (!ok) return;
+      try {
+        await MR.del('/api/personas/' + encodeURIComponent(id));
+        MR.toast('已删除', 'success');
+        loadPersonas();
+      } catch (err) { MR.toast(err.message, 'error'); }
+    }
+  }
+
+  /** 新建 / 编辑表单；card 为 null 表示新建。 */
+  function openPersonaForm(card) {
+    var editing = !!card;
+    card = card || {};
+    var tags = (card.tags || []).join(', ');
+    var body =
+      '<div class="form-row">' +
+        '<div class="field"><label>ID（编辑时不可改）</label>' +
+          '<input id="p-id" value="' + MR.escape(card.id || '') + '"' + (editing ? ' disabled' : '') + ' placeholder="留空自动生成"></div>' +
+        '<div class="field"><label>名称 *</label><input id="p-name" value="' + MR.escape(card.name || '') + '"></div>' +
+      '</div>' +
+      '<div class="form-row">' +
+        '<div class="field"><label>头像（emoji 或路径）</label><input id="p-avatar" value="' + MR.escape(card.avatar || '🙂') + '"></div>' +
+        '<div class="field"><label>标签（逗号分隔）</label><input id="p-tags" value="' + MR.escape(tags) + '"></div>' +
+      '</div>' +
+      '<div class="field"><label>简介</label><textarea id="p-description">' + MR.escape(card.description || '') + '</textarea></div>' +
+      '<div class="field"><label>性格</label><textarea id="p-personality">' + MR.escape(card.personality || '') + '</textarea></div>' +
+      '<div class="field"><label>说话风格</label><textarea id="p-speaking_style">' + MR.escape(card.speaking_style || '') + '</textarea></div>' +
+      '<div class="field"><label>背景设定</label><textarea id="p-scenario">' + MR.escape(card.scenario || '') + '</textarea></div>' +
+      '<div class="field"><label>开场白</label><textarea id="p-greeting">' + MR.escape(card.greeting || '') + '</textarea></div>' +
+      '<div class="field"><label>系统提示词（留空则按上面的字段自动拼接）</label>' +
+        '<textarea id="p-system_prompt">' + MR.escape(card.system_prompt || '') + '</textarea></div>' +
+      '<div class="field"><label>对话示例</label><div id="p-examples"></div>' +
+        '<button class="btn btn-sm btn-ghost" data-add-ex="1">＋ 添加一行</button></div>';
+
+    var mask = MR.openModal({
+      title: editing ? ('编辑人设 · ' + (card.id || '')) : '新建人设',
+      bodyHtml: body,
+      footHtml: '<button class="btn btn-ghost" data-close="1">取消</button>' +
+        '<button class="btn btn-primary" id="p-save">保存</button>'
+    });
+
+    var examplesEl = mask.querySelector('#p-examples');
+    function addExample(user, assistant) {
+      var row = document.createElement('div');
+      row.className = 'ex-row';
+      row.innerHTML =
+        '<input class="ex-user" placeholder="用户" value="' + MR.escape(user || '') + '">' +
+        '<input class="ex-assistant" placeholder="助手" value="' + MR.escape(assistant || '') + '">' +
+        '<button class="btn btn-sm btn-danger" data-remove-ex="1">删除</button>';
+      examplesEl.appendChild(row);
+    }
+    (card.example_dialogue || []).forEach(function (t) { addExample(t.user, t.assistant); });
+
+    mask.addEventListener('click', async function (e) {
+      if (e.target.closest('[data-add-ex]')) { addExample('', ''); return; }
+      if (e.target.closest('[data-remove-ex]')) {
+        var row = e.target.closest('.ex-row');
+        if (row) row.remove();
+        return;
+      }
+      if (!e.target.closest('#p-save')) return;
+
+      var name = mask.querySelector('#p-name').value.trim();
+      if (!name) { MR.toast('名称不能为空', 'error'); return; }
+      var payload = {
+        name: name,
+        avatar: mask.querySelector('#p-avatar').value.trim() || '🙂',
+        description: mask.querySelector('#p-description').value,
+        personality: mask.querySelector('#p-personality').value,
+        speaking_style: mask.querySelector('#p-speaking_style').value,
+        scenario: mask.querySelector('#p-scenario').value,
+        greeting: mask.querySelector('#p-greeting').value,
+        system_prompt: mask.querySelector('#p-system_prompt').value,
+        tags: mask.querySelector('#p-tags').value.split(',').map(function (s) { return s.trim(); })
+          .filter(function (s) { return s; }),
+        example_dialogue: Array.prototype.map.call(mask.querySelectorAll('.ex-row'), function (r) {
+          return {
+            user: r.querySelector('.ex-user').value,
+            assistant: r.querySelector('.ex-assistant').value
+          };
+        }).filter(function (t) { return t.user || t.assistant; })
+      };
+
+      try {
+        if (editing) {
+          await MR.put('/api/personas/' + encodeURIComponent(card.id), payload);
+        } else {
+          var pid = mask.querySelector('#p-id').value.trim();
+          if (pid) payload.id = pid;
+          await MR.post('/api/personas', payload);
+        }
+        MR.toast('已保存', 'success');
+        mask.close();
+        loadPersonas();
+      } catch (err) {
+        MR.toast(err.message, 'error');
+      }
+    });
+  }
+
+  async function exportPersonas() {
+    try {
+      var data = await MR.get('/api/personas/export');
+      var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'personas-export.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+      MR.toast('已导出 ' + ((data.personas || []).length) + ' 个人设', 'success');
+    } catch (err) {
+      MR.toast(err.message, 'error');
+    }
+  }
+
+  function openImport() {
+    var body =
+      '<div class="field"><label>粘贴 JSON（单卡 / 卡片数组 / 备份对象均可）</label>' +
+        '<textarea id="imp-text" class="mono" style="min-height:140px" placeholder="{ &quot;personas&quot;: [ ... ] }"></textarea></div>' +
+      '<div class="field"><label>或选择 .json 文件</label><input type="file" id="imp-file" accept=".json,application/json"></div>' +
+      '<label class="field-inline"><input type="checkbox" id="imp-overwrite" style="width:auto"> 覆盖同名 id</label>';
+    var mask = MR.openModal({
+      title: '导入人设',
+      bodyHtml: body,
+      footHtml: '<button class="btn btn-ghost" data-close="1">取消</button>' +
+        '<button class="btn btn-primary" id="imp-go">导入</button>'
+    });
+
+    var fileText = '';
+    mask.querySelector('#imp-file').addEventListener('change', function (e) {
+      var file = e.target.files && e.target.files[0];
+      if (!file) { fileText = ''; return; }
+      var reader = new FileReader();
+      reader.onload = function () { fileText = String(reader.result || ''); };
+      reader.onerror = function () { MR.toast('文件读取失败', 'error'); };
+      reader.readAsText(file);
+    });
+
+    mask.querySelector('#imp-go').addEventListener('click', async function () {
+      var raw = (mask.querySelector('#imp-text').value || '').trim() || fileText.trim();
+      if (!raw) { MR.toast('请粘贴 JSON 或选择文件', 'error'); return; }
+      var data;
+      try { data = JSON.parse(raw); }
+      catch (err) { data = raw; } // 交给服务端解析
+      try {
+        var res = await MR.post('/api/personas/import', {
+          data: data,
+          overwrite: mask.querySelector('#imp-overwrite').checked
+        });
+        MR.toast('已导入 ' + (res.count || 0) + ' 个人设', 'success');
+        mask.close();
+        loadPersonas();
+      } catch (err) {
+        MR.toast(err.message, 'error');
+      }
+    });
+  }
+
+  // ================================================================
+  // 记忆
+  // ----------------------------------------------------------------
+  function bindMemory() {
+    $('mem-load').addEventListener('click', function () { setMemMode('list'); });
+    $('mem-search').addEventListener('click', searchMemories);
+    $('mem-back').addEventListener('click', function () { setMemMode('list'); });
+    $('mem-stats-refresh').addEventListener('click', loadStats);
+    $('mem-tbody').addEventListener('click', onMemoryAction);
+  }
+
+  function setMemMode(mode) {
+    memMode = mode;
+    $('mem-back').hidden = mode !== 'search';
+    $('mem-mode').textContent = mode === 'search' ? '语义检索模式' : '列表模式';
+    loadMemories();
+  }
+
+  async function loadMemories() {
+    var params = {
+      kind: $('mem-kind').value,
+      query: memMode === 'list' ? $('mem-query').value.trim() : '',
+      limit: $('mem-limit').value
+    };
+    try {
+      var data = await MR.get('/api/memories' + MR.qs(params));
+      renderMemories(data.memories || []);
+    } catch (err) {
+      renderMemories([]);
+      MR.toast(err.message, 'error');
+    }
+  }
+
+  async function searchMemories() {
+    var query = $('mem-query').value.trim();
+    if (!query) { MR.toast('请输入检索关键词', 'error'); return; }
+    var kind = $('mem-kind').value;
+    try {
+      var data = await MR.post('/api/memories/search', {
+        query: query,
+        top_k: Number($('mem-limit').value) || 10,
+        kinds: kind ? [kind] : null,
+        persona_id: ''
+      });
+      memMode = 'search';
+      $('mem-back').hidden = false;
+      $('mem-mode').textContent = '语义检索模式';
+      renderMemories(data.memories || []);
+    } catch (err) {
+      MR.toast(err.message, 'error');
+    }
+  }
+
+  function renderMemories(list) {
+    var tbody = $('mem-tbody');
+    $('mem-empty').hidden = list.length > 0;
+    tbody.innerHTML = list.map(function (m) {
+      var imp = typeof m.importance === 'number' ? m.importance : 0;
+      var score = (memMode === 'search' && typeof m.score === 'number')
+        ? '<div class="hint mono">相似度 ' + m.score.toFixed(3) + '</div>' : '';
+      return '<tr data-id="' + m.id + '" data-kind="' + MR.escape(m.kind) + '">' +
+        '<td class="mono">' + m.id + '</td>' +
+        '<td class="cell-kind"><span class="badge ' + (m.kind === 'core' ? 'badge-accent' : 'badge-ok') + '">' +
+          MR.escape(m.kind) + '</span></td>' +
+        '<td class="cell-importance"><span class="mono">' + imp.toFixed(2) +
+          '</span><span class="bar"><i style="width:' + (Math.max(0, Math.min(1, imp)) * 100) + '%"></i></span></td>' +
+        '<td class="cell-content"><div class="mem-content">' + MR.escape(m.content || '') + '</div>' + score + '</td>' +
+        '<td>' + MR.escape(m.speaker_name || '-') + '</td>' +
+        '<td class="mono">' + MR.escape(m.session_id || '-') + '</td>' +
+        '<td class="mono">' + (Number(m.access_count) || 0) + '</td>' +
+        '<td class="cell-actions">' +
+          '<button class="btn btn-sm btn-ghost" data-act="edit">编辑</button>' +
+          '<button class="btn btn-sm btn-danger" data-act="del">删除</button>' +
+        '</td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  async function onMemoryAction(e) {
+    var btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    var tr = btn.closest('tr');
+    if (!tr) return;
+    var id = tr.getAttribute('data-id');
+    var act = btn.getAttribute('data-act');
+
+    if (act === 'edit') { enterMemEdit(tr); return; }
+    if (act === 'cancel') { loadMemories(); return; }
+    if (act === 'save') {
+      var importance = parseFloat(tr.querySelector('.mem-imp').value);
+      if (!(importance >= 0 && importance <= 1)) { MR.toast('重要度需在 0 ~ 1 之间', 'error'); return; }
+      try {
+        await MR.put('/api/memories/' + id, {
+          content: tr.querySelector('.mem-content-edit').value,
+          importance: importance,
+          kind: tr.querySelector('.mem-kind-sel').value
+        });
+        MR.toast('已保存', 'success');
+        loadMemories();
+      } catch (err) { MR.toast(err.message, 'error'); }
+      return;
+    }
+    if (act === 'del') {
+      var ok = await MR.confirm('确定删除记忆 #' + id + '？该记忆将全局失效。', { danger: true, title: '删除记忆' });
+      if (!ok) return;
+      try {
+        await MR.del('/api/memories/' + id);
+        MR.toast('已删除', 'success');
+        loadMemories();
+        loadStats();
+      } catch (err) { MR.toast(err.message, 'error'); }
+    }
+  }
+
+  function enterMemEdit(tr) {
+    var kind = tr.getAttribute('data-kind');
+    var content = tr.querySelector('.mem-content').textContent;
+    var imp = parseFloat(tr.querySelector('.cell-importance .mono').textContent) || 0;
+    tr.querySelector('.cell-kind').innerHTML =
+      '<select class="input-sm mem-kind-sel"><option value="core">core</option>' +
+      '<option value="episodic">episodic</option></select>';
+    tr.querySelector('.mem-kind-sel').value = kind;
+    tr.querySelector('.cell-importance').innerHTML =
+      '<input type="number" class="input-sm mem-imp" min="0" max="1" step="0.05" value="' + imp + '">';
+    tr.querySelector('.cell-content').innerHTML =
+      '<textarea class="input-sm mem-content-edit mono" style="min-height:70px">' + MR.escape(content) + '</textarea>';
+    tr.querySelector('.cell-actions').innerHTML =
+      '<button class="btn btn-sm btn-primary" data-act="save">保存</button>' +
+      '<button class="btn btn-sm btn-ghost" data-act="cancel">取消</button>';
+  }
+
+  async function loadStats() {
+    try {
+      var data = await MR.get('/api/memories/stats');
+      $('mem-stats').innerHTML = renderKV(data, 0);
+    } catch (err) {
+      $('mem-stats').innerHTML = '<div class="hint">加载失败：' + MR.escape(err.message) + '</div>';
+    }
+  }
+
+  /** 防御式渲染任意结构的键值对象（值为对象时递归成嵌套列表）。 */
+  function renderKV(value, depth) {
+    if (value === null) return '<span class="mono">null</span>';
+    if (Array.isArray(value)) return MR.escape(value.join(', '));
+    if (typeof value === 'object') {
+      return Object.keys(value).map(function (key) {
+        var v = value[key];
+        var nested = v !== null && typeof v === 'object';
+        var pad = 'style="padding-left:' + (depth * 10) + 'px"';
+        return '<div class="kv-item" ' + pad + '>' +
+          '<span class="kv-key">' + MR.escape(key) + '</span>' +
+          (nested
+            ? '<div class="kv-block">' + renderKV(v, depth + 1) + '</div>'
+            : '<span class="kv-val mono">' + MR.escape(String(v)) + '</span>') +
+        '</div>';
+      }).join('');
+    }
+    return MR.escape(String(value));
+  }
+
+  // ================================================================
+  // 模型
+  // ----------------------------------------------------------------
+  function bindModel() {
+    $('model-refresh').addEventListener('click', loadModels);
+    $('model-tbody').addEventListener('click', onModelAction);
+  }
+
+  async function loadModels() {
+    try {
+      var data = await MR.get('/api/models');
+      var active = data.active || {};
+      $('model-current').innerHTML =
+        kvItem('后端', data.backend || '-') +
+        kvItem('默认模型', data.default_model || '（未设置）') +
+        kvItem('OpenAI 风格', data.openai_style ? '是' : '否') +
+        kvItem('活跃标识', (active.active_key || []).join(' / ') || '（未装载）');
+      var tbody = $('model-tbody');
+      var models = data.models || [];
+      if (!models.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="hint">没有可用模型</td></tr>';
+        return;
+      }
+      tbody.innerHTML = models.map(function (m) {
+        var isDefault = m.id === data.default_model;
+        return '<tr data-id="' + MR.escape(m.id) + '">' +
+          '<td class="mono">' + MR.escape(m.id) + '</td>' +
+          '<td>' + MR.escape(m.name || '-') + '</td>' +
+          '<td>' + MR.escape(m.params || '-') + '</td>' +
+          '<td>' + MR.escape(m.quant || '-') + '</td>' +
+          '<td class="mono">' + (m.approx_size_mb ? MR.fmtBytes(m.approx_size_mb * 1024 * 1024) : '-') + '</td>' +
+          '<td class="mono">' + MR.escape(m.filename || '-') + '</td>' +
+          '<td>' + (m.downloaded ? '<span class="badge badge-ok">已下载</span>' : '<span class="badge badge-warn">未下载</span>') +
+            (isDefault ? ' <span class="badge badge-accent">默认</span>' : '') + '</td>' +
+          '<td><button class="btn btn-sm" data-act="set"' + (isDefault ? ' disabled' : '') + '>设为默认</button></td>' +
+        '</tr>';
+      }).join('');
+    } catch (err) {
+      $('model-current').innerHTML = '<div class="hint">加载失败：' + MR.escape(err.message) + '</div>';
+    }
+  }
+
+  function kvItem(key, value) {
+    return '<div class="kv-item"><span class="kv-key">' + MR.escape(key) +
+      '</span><span class="kv-val mono">' + MR.escape(value) + '</span></div>';
+  }
+
+  async function onModelAction(e) {
+    var btn = e.target.closest('[data-act="set"]');
+    if (!btn) return;
+    var tr = btn.closest('tr');
+    var id = tr.getAttribute('data-id');
+    btn.disabled = true;
+    btn.textContent = '切换中…';
+    try {
+      var res = await MR.post('/api/models/default', { model_id: id });
+      $('model-result').hidden = false;
+      $('model-result').textContent = JSON.stringify(res, null, 2);
+      MR.toast('默认模型已切换为「' + (res.default_model || id) + '」', 'success');
+      loadModels();
+    } catch (err) {
+      MR.toast(err.message, 'error');
+      btn.disabled = false;
+      btn.textContent = '设为默认';
+    }
+  }
+
+  // ================================================================
+  // 对话策略
+  // ----------------------------------------------------------------
+  function bindPolicy() {
+    $('pol-save').addEventListener('click', savePolicy);
+  }
+
+  function prefillPolicy(status) {
+    var policy = (status && status.engine && status.engine.policy) || {};
+    var rt = (status && status.runtime && status.runtime.dialogue) || {};
+    var prob = rt.group_reply_probability != null ? rt.group_reply_probability
+      : (policy.group_reply_probability != null ? policy.group_reply_probability : 0);
+    var mentioned = rt.group_reply_when_mentioned != null ? rt.group_reply_when_mentioned
+      : (policy.reply_when_mentioned != null ? policy.reply_when_mentioned : true);
+    $('pol-prob').value = prob;
+    $('pol-mentioned').checked = !!mentioned;
+    $('pol-label').checked = !!rt.label_group_speakers;
+    $('pol-result').textContent = '已读取当前值';
+  }
+
+  async function savePolicy() {
+    var prob = parseFloat($('pol-prob').value);
+    if (!(prob >= 0 && prob <= 1)) { MR.toast('概率需在 0 ~ 1 之间', 'error'); return; }
+    try {
+      var res = await MR.put('/api/system/dialogue', {
+        group_reply_probability: prob,
+        group_reply_when_mentioned: $('pol-mentioned').checked,
+        label_group_speakers: $('pol-label').checked
+      });
+      var d = res.dialogue || {};
+      $('pol-result').textContent = '已保存：' + JSON.stringify(d);
+      MR.toast('策略已更新', 'success');
+    } catch (err) {
+      MR.toast(err.message, 'error');
+    }
+  }
+})();
+</script>
+</body>
+</html>

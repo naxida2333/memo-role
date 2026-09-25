@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>memo-role · 聊天</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="layout">
+  <!-- 左侧会话栏 -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-head">
+      <span class="brand">memo-role</span>
+      <button class="btn btn-sm btn-ghost nav-close" id="sidebar-close" title="收起">✕</button>
+    </div>
+    <div class="sidebar-body">
+      <button class="btn btn-primary block" id="new-session">＋ 新建会话</button>
+    </div>
+    <div class="session-list" id="session-list"></div>
+    <div class="sidebar-foot" id="nav"></div>
+  </aside>
+
+  <div class="scrim" id="scrim"></div>
+
+  <!-- 右侧对话主区 -->
+  <main class="main">
+    <header class="topbar">
+      <button class="btn btn-sm btn-ghost nav-toggle" id="sidebar-open" title="会话列表">☰</button>
+      <div class="chat-title" id="chat-title">未选择会话</div>
+      <div class="badges" id="chat-badges"></div>
+      <div class="topbar-actions">
+        <button class="btn btn-sm btn-ghost" id="btn-reset" disabled>清空上下文</button>
+      </div>
+    </header>
+
+    <!-- 会话绑定切换：通过发送内置指令实现，不调用额外接口 -->
+    <div class="controls">
+      <div class="field">
+        <label for="persona-select">本会话人设</label>
+        <select id="persona-select" disabled></select>
+      </div>
+      <div class="field">
+        <label for="model-select">本会话模型</label>
+        <select id="model-select" disabled></select>
+      </div>
+    </div>
+
+    <div class="messages" id="messages"></div>
+
+    <div class="notice" id="model-warn" hidden></div>
+
+    <div class="chips" id="command-chips"></div>
+
+    <div class="composer">
+      <textarea id="input" rows="1" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）" disabled></textarea>
+      <div class="composer-actions">
+        <button class="btn btn-ghost" id="btn-stop" hidden>停止</button>
+        <button class="btn btn-primary" id="btn-send" disabled>发送</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="/static/common.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
