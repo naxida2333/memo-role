@@ -71,6 +71,7 @@ public class Container {
     private final File base;
     private final File binDir;
     private final File libDir;
+    private final File libexecDir;
     private final File rootfs;
     private final File cacheDir;
     private final File tmpDir;
@@ -84,6 +85,7 @@ public class Container {
         this.base = this.ctx.getFilesDir();
         this.binDir = new File(base, "usr/bin");
         this.libDir = new File(base, "usr/lib");
+        this.libexecDir = new File(base, "usr/libexec/proot");
         this.rootfs = new File(base, "rootfs");
         this.cacheDir = new File(base, "cache");
         this.tmpDir = new File(base, "tmp");
@@ -110,9 +112,33 @@ public class Container {
         return logsDir;
     }
 
-    /** proot 运行时是否已就位。 */
+    /**
+     * proot 运行时是否已就位。
+     *
+     * <p>必须把 loader 也算进来：proot 执行容器里的 ELF 时，内核会先拿 PT_INTERP
+     * 去**宿主**找解释器（例如 /lib/ld-linux-aarch64.so.1），安卓上没有这个文件，
+     * 于是直接 ENOENT。proot 靠自己的 loader 把这个路径换成容器内的，缺失时
+     * 报错只有一句 `execve("/usr/bin/env"): No such file or directory`，
+     * 看起来像容器坏了，其实只是少了一个 18 KB 的辅助文件。
+     */
     public boolean isRuntimeInstalled() {
-        return new File(binDir, "proot").isFile() && new File(libDir, "libtalloc.so.2").isFile();
+        return missingRuntimeFiles().isEmpty();
+    }
+
+    /** 列出缺失的运行时文件（便于在手机上直接看出漏装了什么）。 */
+    public List<String> missingRuntimeFiles() {
+        List<String> missing = new ArrayList<String>();
+        collectMissing(missing, new File(binDir, "proot"));
+        collectMissing(missing, new File(libDir, "libtalloc.so.2"));
+        collectMissing(missing, new File(libDir, "libandroid-shmem.so"));
+        collectMissing(missing, new File(libexecDir, "loader"));
+        return missing;
+    }
+
+    private static void collectMissing(List<String> missing, File f) {
+        if (!f.isFile()) {
+            missing.add(f.getName());
+        }
     }
 
     /**
@@ -172,9 +198,13 @@ public class Container {
     public void installRuntime() throws IOException {
         binDir.mkdirs();
         libDir.mkdirs();
+        libexecDir.mkdirs();
         copyAsset("proot/proot", new File(binDir, "proot"), true);
         copyAsset("proot/libtalloc.so.2", new File(libDir, "libtalloc.so.2"), false);
         copyAsset("proot/libandroid-shmem.so", new File(libDir, "libandroid-shmem.so"), false);
+        // loader 是 proot 执行容器内程序的必需品（见 isRuntimeInstalled 的说明）
+        copyAsset("proot/loader", new File(libexecDir, "loader"), true);
+        copyAsset("proot/loader32", new File(libexecDir, "loader32"), true);
     }
 
     private void copyAsset(String assetPath, File dest, boolean executable) throws IOException {
@@ -362,8 +392,15 @@ public class Container {
      * 在容器里跑 bootstrap.sh（apt 装 Python、pip 装依赖）。
      *
      * <p>输出会实时回传：这一步在手机上要几分钟，没有输出用户会以为卡死。
+     * 成功后会留下一个标记文件，重复初始化时可直接跳过。
      */
     public void runBootstrap(final Log log) throws IOException, InterruptedException {
+        File marker = new File(rootfs, "root/.bootstrap-done");
+        if (marker.isFile()) {
+            log.log("依赖此前已经装好，跳过（要重装请用设置里的重置）");
+            return;
+        }
+
         copyAsset("bootstrap.sh", new File(rootfs, "root/bootstrap.sh"), false);
         List<String> cmd = prootCommand("/bin/bash /root/bootstrap.sh");
         ProcessBuilder pb = builder(cmd);
@@ -372,8 +409,39 @@ public class Container {
         pipe(p.getInputStream(), log);
         int code = p.waitFor();
         if (code != 0) {
+            // proot 的报错往往只有一句话，没有上下文很难判断，所以把命令行也打出来
+            List<String> missing = missingRuntimeFiles();
+            if (!missing.isEmpty()) {
+                log.log("运行时文件缺失：" + missing);
+            }
+            log.log("失败的命令：");
+            log.log("  " + joinCommand(cmd));
             throw new IOException("依赖安装失败（退出码 " + code + "），详见上方输出");
         }
+
+        File markerFile = new File(rootfs, "root/.bootstrap-done");
+        try {
+            writeText(markerFile, "ok\n");
+        } catch (IOException e) {
+            // 标记写不上不影响本次结果，下次重跑一遍而已
+            log.log("提示：无法写入完成标记（" + e.getMessage() + "）");
+        }
+    }
+
+    /** 把命令拼成可直接复制去终端跑的一行（带引号，路径含空格也不会歧义）。 */
+    static String joinCommand(List<String> cmd) {
+        StringBuilder sb = new StringBuilder();
+        for (String part : cmd) {
+            if (sb.length() > 0) {
+                sb.append(' ');
+            }
+            if (part.indexOf(' ') >= 0 || part.indexOf('\'') >= 0) {
+                sb.append('\'').append(part.replace("'", "'\\''")).append('\'');
+            } else {
+                sb.append(part);
+            }
+        }
+        return sb.toString();
     }
 
     // ------------------------------------------------------------------
@@ -550,6 +618,10 @@ public class Container {
         env.put("LD_LIBRARY_PATH", libDir.getAbsolutePath());
         // proot 会在 TMPDIR 下放它的 loader；安卓的 /tmp 应用不可写，必须改到这里
         env.put("PROOT_TMP_DIR", tmpDir.getAbsolutePath());
+        // proot 默认去 Termux 的目录找 loader（编译期写死），这里必须指到我们自己的路径，
+        // 否则执行容器内的程序会直接 ENOENT（见 isRuntimeInstalled 的说明）
+        env.put("PROOT_LOADER", new File(libexecDir, "loader").getAbsolutePath());
+        env.put("PROOT_LOADER_32", new File(libexecDir, "loader32").getAbsolutePath());
         env.put("PROOT_NO_SECCOMP", "1");
         pb.directory(base);
         return pb;
@@ -562,9 +634,15 @@ public class Container {
     /** 供界面展示的容器状态摘要。 */
     public String statusSummary() {
         StringBuilder sb = new StringBuilder();
-        sb.append("proot 运行时：").append(isRuntimeInstalled() ? "已就绪" : "未安装").append('\n');
+        List<String> missing = missingRuntimeFiles();
+        sb.append("proot 运行时：")
+                .append(missing.isEmpty() ? "已就绪" : "缺 " + missing)
+                .append('\n');
         sb.append("Ubuntu 容器：").append(isRootfsReady() ? "已就绪" : "未安装").append('\n');
         sb.append("项目代码：").append(isProjectReady() ? "已拉取" : "未拉取").append('\n');
+        sb.append("Python 依赖：")
+                .append(new File(rootfs, "root/.bootstrap-done").isFile() ? "已安装" : "未安装")
+                .append('\n');
         sb.append("服务：").append(isServiceRunning() ? "运行中" : "未运行").append('\n');
         sb.append("地址：").append(baseUrl());
         return sb.toString();

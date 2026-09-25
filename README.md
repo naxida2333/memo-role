@@ -161,17 +161,24 @@ SDK=/path/to/android-sdk ./build.sh     # 需要 SDK 的 build-tools + platforms
 
 ### 内置的第三方二进制
 
-`android/assets/proot/` 里的 `proot` 与两个 `.so` 取自 Termux 官方仓库，
-许可以及上游源码地址见该目录下的 `NOTICE.md`。它们不是本项目的代码，
-随 APK 分发是为了让 App 能自己拉起容器。
+`android/assets/proot/` 里的 5 个文件（`proot`、`loader`、`loader32`、两个 `.so`）取自
+Termux 官方仓库，许可以及上游源码地址见该目录下的 `NOTICE.md`。
+它们不是本项目的代码，随 APK 分发是为了让 App 能自己拉起容器。
+**每个文件都是必需的**，尤其 `loader` —— 缺了它 proot 无法在容器里执行任何程序。
 
 ### 离线自测（不需要手机）
 
 ```bash
-android/tests/run.sh     # 校验自写的 tar 解压器（需要 JDK 11+ / python3 / GNU tar）
+android/tests/check-runtime.sh   # 校验 proot 运行时是否齐全、形态是否能在安卓上跑
+android/tests/run.sh             # 校验自写的 tar 解压器（需要 JDK 11+ / python3 / GNU tar）
 ```
 
-它用合成 tar.gz 分别喂给 `TarGz` 与系统 `tar`，逐项比对条目、类型、符号链接目标、
+`check-runtime.sh` 逐项确认随包分发的 proot 运行时：文件是否齐全（**proot 官方包装的不止
+一个可执行文件**，漏掉 `libexec/proot/loader` 会导致容器里什么都执行不了）、架构是否正确、
+两个 loader 是否静态链接、proot 的解释器是否为系统 linker、动态依赖是否都在包里。
+离线运行，不需要网络与 SDK。
+
+`run.sh` 用合成 tar.gz 分别喂给 `TarGz` 与系统 `tar`，逐项比对条目、类型、符号链接目标、
 内容摘要、权限位（含 setuid）与硬链接。覆盖 GNU 与 POSIX(pax) 两种打包格式，
 以及超长路径、二进制内容、空文件等边界 —— 解压是初始化流程的第 3 步，
 错了后面全卡住，所以在真机之外必须有办法验证。
@@ -283,7 +290,8 @@ android/tests/run.sh     # 校验自写的 tar 解压器（需要 JDK 11+ / pyth
 | --- | --- | --- |
 | APK 结构与签名 | `apksigner verify` + `aapt2 dump badging` | v2+v3 签名通过；targetSdk 为 28 |
 | 包内 proot 未被损坏 | 解出 assets 里的 proot 与源 deb 比对 MD5 | 一致（`e8b9fd8b…`） |
-| proot 能否脱离 Termux 运行 | `readelf` 查 ELF 解释器与依赖 | 解释器是系统 `/system/bin/linker64`，仅依赖两个已随包分发的 `.so` |
+| proot 能否脱离 Termux 运行 | `readelf` 查 ELF 解释器与依赖 | 解释器是系统 `/system/bin/linker64` |
+| proot 运行时是否完整可行 | `android/tests/check-runtime.sh` | 5 个文件齐全；两个 loader 静态链接；架构正确；依赖都在包里 |
 | proot 是否支持安卓必需选项 | 二进制字符串 + 包元数据 | 支持 `--link2symlink` / `--kill-on-exit` |
 | 依赖能否免编译安装 | `pip download --platform manylinux2014_aarch64` | 全部 30 个包均有 aarch64 现成轮子（含 `pydantic-core`） |
 | rootfs 结构是否被解压器覆盖 | 用 `tarfile` 解析真实 Ubuntu 包 | 3413 条目，typeflag 仅 0/1/2/5，无 pax 头；usrmerge（`bin` 是指向 `usr/bin` 的符号链接）已适配 |
