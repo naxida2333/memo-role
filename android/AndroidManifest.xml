@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  memo-role 安卓外壳：一个 WebView 容器。
+  memo-role 安卓客户端：原生界面 + 内置 Linux 容器。
 
-  它是「客户端」，不包含 Python 服务与模型 —— 服务仍在 Termux 里跑，
-  这个 APK 只负责把界面装进一个可点开的应用里（省掉浏览器输地址、
-  并补齐网页在 WebView 下容易坏的两件事：文件上传与下载）。
+  APK 里带 proot 运行时、容器引导脚本与本地推理引擎（llama-server），
+  首次启动时下载 Ubuntu arm64 base rootfs、装依赖、拉项目代码，
+  之后服务就在这台设备上跑（见 Container.java），不需要 Termux。
 
   usesCleartextTraffic 必须为 true：本地服务是 http://，Android 9+ 默认禁止明文。
 -->

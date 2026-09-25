@@ -58,6 +58,41 @@ public class Container {
     private static final String KEY_REPO = "repo_url";
     private static final String KEY_PORT = "port";
 
+    /**
+     * 容器内依赖清单的版本。
+     *
+     * <p>{@code bootstrap.sh} 里每多装一样东西就要 +1。原因：容器是一次装好的，
+     * 用户升级 APK 时旧容器还在，只看「标记文件是否存在」会直接跳过，
+     * 新增的依赖（比如本地推理引擎要的 libgomp1）就永远装不上。
+     * 版本号变了就重跑一遍 bootstrap —— apt 与 pip 都是幂等的，缺什么补什么。
+     */
+    private static final int BOOTSTRAP_VERSION = 2;
+    private static final String BOOTSTRAP_MARKER = "root/.bootstrap-done";
+
+    /** 本地推理引擎（llama.cpp）在容器里的安装位置。 */
+    private static final String LLAMA_DIR = "usr/local/lib/llama";
+    private static final String LLAMA_BIN = "usr/local/bin/llama-server";
+
+    /**
+     * llama-server 的入口脚本。
+     *
+     * <p>为什么不直接放软链、也不把二进制复制到 /usr/local/bin：llama.cpp 找它那
+     * 八个 CPU 变体库（`libggml-cpu-*.so`）是**扫可执行文件自己所在目录**的，
+     * 不是按 SONAME 走动态链接器（`GGML_BACKEND_PATH` 只能指定单个文件，
+     * 指目录会报 "Is a directory"）。实测把二进制挪到别处，启动时只会得到
+     * `no backends are loaded` —— 连模型都加载不了。
+     *
+     * <p>转一手 `exec` 真身，可执行文件路径与库目录就始终一致：动态链接器按
+     * RUNPATH 里的 `$ORIGIN` 找库、ggml 按 exe 目录找 CPU 变体，两条路都不会偏。
+     * （proot 会读脚本开头的 shebang 并把解释器换成容器内的路径 —— 见 proot 源码
+     * `src/execve/shebang.c` 的 expand_shebang()，所以容器内直接执行本脚本没问题。）
+     */
+    private static final String LLAMA_WRAPPER =
+            "#!/bin/sh\n"
+                    + "# APK 内置的本地推理引擎（llama.cpp）。真身与它的 .so 同在\n"
+                    + "# /usr/local/lib/llama（二进制自带 $ORIGIN 的 RUNPATH），这里只是转一手。\n"
+                    + "exec /usr/local/lib/llama/llama-server \"$@\"\n";
+
     /** 日志回调（在后台线程被调用，不能直接碰 UI）。 */
     public interface Log {
         void log(String line);
@@ -158,9 +193,18 @@ public class Container {
         return new File(projectDir, "memo_role/__main__.py").isFile();
     }
 
-    /** 可以启动服务了（代码与容器都在）。 */
+    /**
+     * 可以启动服务了（运行时、容器、代码、依赖、本地推理引擎都在）。
+     *
+     * <p>把依赖与推理引擎也算进来，是为了让**升级 APK 的老用户**能走到这里：
+     * 容器和代码都还在，一键初始化会把新增的部分补上（这几步都已做过的会自动跳过）。
+     */
     public boolean isReady() {
-        return isRuntimeInstalled() && isRootfsReady() && isProjectReady();
+        return isRuntimeInstalled()
+                && isRootfsReady()
+                && isProjectReady()
+                && isBootstrapCurrent()
+                && isLlamaServerInstalled();
     }
 
     public boolean isServiceRunning() {
@@ -224,6 +268,77 @@ public class Container {
         } catch (Exception e) {
             throw new IOException("无法设置权限：" + dest, e);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // 一之半、安装本地推理引擎（llama-server）
+    // ------------------------------------------------------------------
+
+    /**
+     * 把 APK 里自带的 llama-server 及其依赖库装进容器。
+     *
+     * <p>文件清单直接读 assets/llama 目录（不是写死的列表）：打包时带了什么就装什么，
+     * 少一个都不会因为「代码里有这个名字」而被忽略。装机后由 bootstrap.sh 试跑一次
+     * 验证，所以「漏文件」这类问题会在初始化日志里当场暴露，而不是等到用户聊天时。
+     *
+     * <p>同样的版本已装好就跳过；APK 升级带来新版本时自动覆盖更新。
+     */
+    public void installLlamaServer() throws IOException {
+        if (isLlamaServerInstalled()) {
+            return;
+        }
+        String[] names = ctx.getAssets().list("llama");
+        if (names == null || names.length == 0) {
+            throw new IOException("APK 里没有 assets/llama（打包漏了本地推理引擎）");
+        }
+        File dir = new File(rootfs, LLAMA_DIR);
+        File binDir = new File(rootfs, "usr/local/bin");
+        // 先清干净：只覆盖不清理的话，旧版本删掉的库会留下来，回头很难判断用的是哪一套
+        deleteRecursively(dir);
+        if (!dir.mkdirs() && !dir.isDirectory()) {
+            throw new IOException("无法创建目录：" + dir);
+        }
+        binDir.mkdirs();
+        for (String name : names) {
+            copyAsset("llama/" + name, new File(dir, name), true);
+        }
+        File wrapper = new File(rootfs, LLAMA_BIN);
+        writeText(wrapper, LLAMA_WRAPPER);
+        try {
+            Os.chmod(wrapper.getAbsolutePath(), 0755);
+        } catch (Exception e) {
+            throw new IOException("无法设置权限：" + wrapper, e);
+        }
+    }
+
+    /** 本地推理引擎是否已装进容器，且版本与 APK 自带的一致。 */
+    public boolean isLlamaServerInstalled() {
+        String installed = installedLlamaVersion();
+        if (installed.isEmpty()) {
+            return false;
+        }
+        String bundled = bundledLlamaVersion();
+        // APK 里没有版本号（异常情况）就不比对，只要装过就当作可用
+        return bundled.isEmpty() || bundled.equals(installed);
+    }
+
+    /** APK 自带的版本号（assets/llama/VERSION 的第一行）。 */
+    public String bundledLlamaVersion() {
+        try (InputStream in = ctx.getAssets().open("llama/VERSION")) {
+            BufferedReader r = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
+            String line = r.readLine();
+            return line == null ? "" : line.trim();
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
+    /** 容器里已安装的版本号；没装（或缺文件）返回空串。 */
+    public String installedLlamaVersion() {
+        if (!new File(rootfs, LLAMA_BIN).isFile()) {
+            return "";
+        }
+        return readText(new File(rootfs, LLAMA_DIR + "/VERSION")).trim();
     }
 
     // ------------------------------------------------------------------
@@ -451,14 +566,13 @@ public class Container {
     // ------------------------------------------------------------------
 
     /**
-     * 在容器里跑 bootstrap.sh（apt 装 Python、pip 装依赖）。
+     * 在容器里跑 bootstrap.sh（apt 装 Python、pip 装依赖、补 llama-server 要的系统库）。
      *
      * <p>输出会实时回传：这一步在手机上要几分钟，没有输出用户会以为卡死。
-     * 成功后会留下一个标记文件，重复初始化时可直接跳过。
+     * 成功后留下带版本号的标记文件；版本一致就跳过（见 {@link #BOOTSTRAP_VERSION}）。
      */
     public void runBootstrap(final Log log) throws IOException, InterruptedException {
-        File marker = new File(rootfs, "root/.bootstrap-done");
-        if (marker.isFile()) {
+        if (isBootstrapCurrent()) {
             log.log("依赖此前已经装好，跳过（要重装请用设置里的重置）");
             return;
         }
@@ -481,13 +595,19 @@ public class Container {
             throw new IOException("依赖安装失败（退出码 " + code + "），详见上方输出");
         }
 
-        File markerFile = new File(rootfs, "root/.bootstrap-done");
+        File markerFile = new File(rootfs, BOOTSTRAP_MARKER);
         try {
-            writeText(markerFile, "ok\n");
+            writeText(markerFile, "ok " + BOOTSTRAP_VERSION + "\n");
         } catch (IOException e) {
             // 标记写不上不影响本次结果，下次重跑一遍而已
             log.log("提示：无法写入完成标记（" + e.getMessage() + "）");
         }
+    }
+
+    /** 容器里的依赖是否已按当前清单版本装好。 */
+    public boolean isBootstrapCurrent() {
+        File marker = new File(rootfs, BOOTSTRAP_MARKER);
+        return marker.isFile() && ("ok " + BOOTSTRAP_VERSION).equals(readText(marker).trim());
     }
 
     /** 把命令拼成可直接复制去终端跑的一行（带引号，路径含空格也不会歧义）。 */
@@ -703,7 +823,13 @@ public class Container {
         sb.append("Ubuntu 容器：").append(isRootfsReady() ? "已就绪" : "未安装").append('\n');
         sb.append("项目代码：").append(isProjectReady() ? "已拉取" : "未拉取").append('\n');
         sb.append("Python 依赖：")
-                .append(new File(rootfs, "root/.bootstrap-done").isFile() ? "已安装" : "未安装")
+                .append(isBootstrapCurrent() ? "已安装" : "未安装")
+                .append('\n');
+        String llama = installedLlamaVersion();
+        sb.append("本地推理引擎：")
+                .append(llama.isEmpty()
+                        ? "未安装（本地模型不可用；仍可在管理后台切第三方 API）"
+                        : "llama-server " + llama + " 已就绪")
                 .append('\n');
         sb.append("服务：").append(isServiceRunning() ? "运行中" : "未运行").append('\n');
         sb.append("地址：").append(baseUrl());

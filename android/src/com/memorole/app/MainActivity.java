@@ -182,7 +182,17 @@ public class MainActivity extends Activity {
                     container.ensureAptSources();
                 });
 
-                step("从 GitHub 拉取项目代码", () -> container.fetchProject(containerProgress()));
+                step("安装本地推理引擎（llama-server）", () -> container.installLlamaServer());
+
+                // 已经有代码就必须走「覆盖式更新」：fetchProject 是先删后解，
+                // 而 models/、data/、config.yaml 都躺在项目目录里（且在 .gitignore 里、
+                // 不在 tarball 中），照那个路子走一遍，模型和聊天记录就没了。
+                // 升级 APK 的老用户会走到这里（容器与代码都在，只缺新增的东西）。
+                if (container.isProjectReady()) {
+                    step("更新项目代码", () -> container.updateProject(containerProgress()));
+                } else {
+                    step("从 GitHub 拉取项目代码", () -> container.fetchProject(containerProgress()));
+                }
 
                 step("在容器内安装 Python 依赖", () -> container.runBootstrap(line -> log(line)));
 

@@ -246,3 +246,8 @@ android/debug.keystore
 # 必须随仓库分发的运行时依赖（缺了它 App 起不来容器），这里把它排除回来。
 # 注意：gitignore 是「后面的规则覆盖前面的」，所以这条必须放在末尾。
 !android/assets/proot/*.so
+
+# 本地推理引擎（llama-server 及其 .so）：由 android/vendor/ 里的 tar.gz 在构建时
+# 展开（见 android/build.sh 第 1 步），27 MB 的展开结果不必入库。
+android/assets/llama/
+

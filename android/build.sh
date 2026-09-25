@@ -29,8 +29,8 @@ MIN_SDK="${MIN_SDK:-24}"
 # 代价：无法上架 Google Play（那里要求更高的 targetSdk），只能侧载安装；
 # 但 Android 只拒绝 targetSdk < 23 的应用，28 在 Android 14/15 上可正常安装。
 TARGET_SDK="${TARGET_SDK:-28}"
-VERSION_CODE="${VERSION_CODE:-1}"
-VERSION_NAME="${VERSION_NAME:-0.1.0}"
+VERSION_CODE="${VERSION_CODE:-8}"
+VERSION_NAME="${VERSION_NAME:-0.3.0}"
 JAVA_RELEASE="${JAVA_RELEASE:-11}"
 
 BT="$SDK/build-tools/$BUILD_TOOLS"
@@ -85,17 +85,37 @@ export JAVA_HOME="$PICKED_JDK"
 export PATH="$JAVA_HOME/bin:$PATH"
 echo "使用 JDK：$JAVA_HOME（$(jdk_major "$JAVA_HOME")）"
 
-echo "==> 0/7 生成图标"
+echo "==> 0/8 生成图标"
 python3 tools/make_icons.py
+
+# ----------------------------------------------------------------------
+# 1/8 展开并校验本地推理引擎（llama-server）
+#
+# 这一份（约 27 MB 原始文件）不直接入库，仓库里放的是 tools/vendor_llama.py
+# 裁好的 vendor/llama-*-ubuntu-arm64.tar.gz（约 12 MB）：构建时展开，再跑一次
+# tests/check-llama.sh —— 漏文件、架构不对、glibc 要求过高都会在这里失败，
+# 而不是等到手机上启动模型时才报一句看不懂的错。
+# ----------------------------------------------------------------------
+echo "==> 1/8 展开并校验本地推理引擎（llama-server）"
+VENDOR_TARBALL="$(ls -1 vendor/llama-*-ubuntu-arm64.tar.gz 2>/dev/null | tail -1 || true)"
+if [ -z "$VENDOR_TARBALL" ]; then
+  echo "缺少 vendor/llama-*-ubuntu-arm64.tar.gz，先生成：" >&2
+  echo "  python3 tools/vendor_llama.py    # 或 --archive /path/to/llama-xxx.tar.gz" >&2
+  exit 1
+fi
+rm -rf assets/llama
+mkdir -p assets/llama
+tar -xzf "$VENDOR_TARBALL" -C assets/llama
+bash tests/check-llama.sh
 
 rm -rf "$BUILD"
 mkdir -p "$BUILD/res" "$BUILD/classes" "$BUILD/gen" "$BUILD/dex" "$DIST"
 
-echo "==> 1/7 编译资源（aapt2 compile）"
+echo "==> 2/8 编译资源（aapt2 compile）"
 "$BT/aapt2" compile --dir res -o "$BUILD/res.zip"
 
-echo "==> 2/7 链接资源与清单（aapt2 link）"
-# -A 把 assets/ 打进 APK：容器引导脚本与 proot 运行时都在里面，
+echo "==> 3/8 链接资源与清单（aapt2 link）"
+# -A 把 assets/ 打进 APK：容器引导脚本、proot 运行时与本地推理引擎都在里面，
 # App 首次运行时再把它们复制到应用私有目录（见 Container.java）。
 "$BT/aapt2" link \
   -o "$BUILD/base.apk" \
@@ -109,20 +129,20 @@ echo "==> 2/7 链接资源与清单（aapt2 link）"
   --version-name "$VERSION_NAME" \
   "$BUILD/res.zip"
 
-echo "==> 3/7 编译 Java（javac --release $JAVA_RELEASE）"
+echo "==> 4/8 编译 Java（javac --release $JAVA_RELEASE）"
 find src "$BUILD/gen" -name '*.java' > "$BUILD/sources.txt"
 javac --release "$JAVA_RELEASE" -encoding UTF-8 \
   -cp "$AJAR" -d "$BUILD/classes" "@$BUILD/sources.txt"
 
-echo "==> 4/7 转成 dex（d8）"
+echo "==> 5/8 转成 dex（d8）"
 find "$BUILD/classes" -name '*.class' > "$BUILD/classes.txt"
 "$BT/d8" --lib "$AJAR" --min-api "$MIN_SDK" --output "$BUILD/dex" "@$BUILD/classes.txt"
 
-echo "==> 5/7 打包并字节对齐（zip + zipalign）"
+echo "==> 6/8 打包并字节对齐（zip + zipalign）"
 (cd "$BUILD/dex" && zip -q "../base.apk" classes.dex)
 "$BT/zipalign" -f -p 4 "$BUILD/base.apk" "$BUILD/aligned.apk"
 
-echo "==> 6/7 准备签名密钥并校验指纹"
+echo "==> 7/8 准备签名密钥并校验指纹"
 if [ ! -f "$KEYSTORE" ]; then
   # 首次构建生成一把自签名调试密钥并保留：换了密钥，覆盖安装会因签名不一致失败
   keytool -genkeypair -keystore "$KEYSTORE" -alias androiddebugkey \
@@ -173,7 +193,7 @@ else
   echo "    密钥指纹与记录一致：$KEY_FPRINT"
 fi
 
-echo "==> 7/7 签名并校验产物"
+echo "==> 8/8 签名并校验产物"
 "$BT/apksigner" sign \
   --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
   --out "$DIST/$APK_NAME" "$BUILD/aligned.apk"

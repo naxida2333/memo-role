@@ -84,6 +84,9 @@ python -m memo_role --check     # 「模型」一项会打印出期望路径
 `inference.llama_server.bin_path`，或让它出现在 `PATH` 里。找不到时程序会在第一次
 对话时明确报出「缺哪个文件 / 缺哪个可执行文件」，而不是静默等待。
 
+> **安卓 App 不用管这一条**：`llama-server`（aarch64 预编译版）随 APK 分发，
+> 一键初始化时装进容器的 `/usr/local/bin`，开箱即用。见下方「安卓 App」一节。
+
 ### 3.5 不想装本地模型？接第三方 API
 
 管理后台「模型」页最上面可以切推理后端：选 `openai_api`，填 `base_url`、模型名、
@@ -131,10 +134,18 @@ python -m memo_role --reload             # 开发用热重载
 2. 下载 Ubuntu base rootfs（约 30 MB）
 3. 解压（约 3400 个文件，含 194 个符号链接）
 4. 写入 DNS 与软件源配置
-5. 从 GitHub 拉取项目代码（走 tarball，省掉在容器里装 git）
-6. 容器内 `apt install python3-pip` + `pip install -r requirements.txt`（约 150 MB）
+5. 安装内置的本地推理引擎 llama-server（约 27 MB，从 APK 里拷进容器，几秒）
+6. 从 GitHub 拉取项目代码（走 tarball，省掉在容器里装 git）
+7. 容器内 `apt install python3-pip` + 补 `libgomp1` 等系统库 +
+   `pip install -r requirements.txt`（约 150 MB），最后试跑一次 `llama-server --version`
+
+第 5 步与第 7 步末尾的试跑都是为了把「漏文件 / 缺库」当场写在日志里，
+而不是等到第一次聊天才报错。
 
 建议留出 2 GB 以上存储空间（容器 + 依赖 + 后续模型）。
+
+> 从 0.2.x 升上来时容器和代码都还在，点一次「一键初始化」即可：已做过的步骤会自动
+> 跳过，只补本地推理引擎与新增的系统库（第 5、7 步），**模型与聊天数据不受影响**。
 
 ### 更新代码
 
@@ -158,15 +169,14 @@ Android 本身只拒绝 targetSdk < 23 的应用，28 在 Android 14/15 上可�
 ### 已知限制
 
 - **服务随 App 进程存活**：App 被系统回收后服务会随之停止（前台服务保活尚未做）。
-- **推理后端尚未集成**：容器里目前只有 Python 依赖，没有 LLM 推理后端。
-  真实聊天需要 llama.cpp 的安卓可用版本（aarch64 `llama-server`），
-  或改用 `openai_api` 后端。界面 / 指令 / 人设 / 记忆 / 文件 / 管理后台不依赖它。
+- **推理引擎只面向 arm64**：随 APK 分发的是 llama.cpp 官方 ubuntu-arm64 预编译包
+  （需要 glibc ≥ 2.38，容器是 Ubuntu 24.04，满足）。
 - **未在真机上验证过**：见下方「测试状态」。
 
 ### 安装
 
 拷到手机点击安装（需允许「安装未知来源应用」），或
-`adb install -r android/dist/memo-role-0.2.1.apk`。
+`adb install -r android/dist/memo-role-0.3.0.apk`。
 
 ### 重新构建
 
@@ -184,15 +194,34 @@ SDK=/path/to/android-sdk ./build.sh     # 需要 SDK 的 build-tools + platforms
 
 ### 内置的第三方二进制
 
-`android/assets/proot/` 里的 5 个文件（`proot`、`loader`、`loader32`、两个 `.so`）取自
-Termux 官方仓库，许可以及上游源码地址见该目录下的 `NOTICE.md`。
+**proot 运行时**：`android/assets/proot/` 里的 5 个文件（`proot`、`loader`、`loader32`、
+两个 `.so`）取自 Termux 官方仓库，许可以及上游源码地址见该目录下的 `NOTICE.md`。
 它们不是本项目的代码，随 APK 分发是为了让 App 能自己拉起容器。
 **每个文件都是必需的**，尤其 `loader` —— 缺了它 proot 无法在容器里执行任何程序。
+
+**本地推理引擎**：`android/vendor/llama-<版本>-ubuntu-arm64.tar.gz` 是从
+[llama.cpp](https://github.com/ggml-org/llama.cpp) 官方预编译发布包裁剪出来的
+`llama-server` 及其依赖库（MIT 许可，版本、下载地址与压缩包 sha256 见包内 `NOTICE.md`）。
+官方包约 32 MB，装了 `llama-cli`、`llama-bench`、`llama-quantize` 等手机用不到的程序；
+这里只保留「从 `llama-server` 出发按 `DT_NEEDED` 展开、再加上 ggml 运行时 dlopen 的
+CPU 变体库」的最小闭包（约 27 MB 原始 / 约 12 MB 压缩）。
+
+`android/assets/llama/` 是构建时从该压缩包展开的产物（**不入库**，见 `.gitignore`），
+`build.sh` 每一步都会重新展开并校验。要换 llama.cpp 版本：
+
+```bash
+cd android
+python3 tools/vendor_llama.py --tag b11191        # 从官方 GitHub 下载并裁剪
+# 或指定已下好的包 / 已解压的目录
+python3 tools/vendor_llama.py --archive /path/to/llama-b11191-bin-ubuntu-arm64.tar.gz
+./tests/check-llama.sh                            # 离线校验（见下）
+```
 
 ### 离线自测（不需要手机）
 
 ```bash
 android/tests/check-runtime.sh   # 校验 proot 运行时是否齐全、形态是否能在安卓上跑
+android/tests/check-llama.sh     # 校验 llama-server 与它的 .so 是否齐全、能不能在容器里加载
 android/tests/run.sh             # 校验自写的 tar 解压器（需要 JDK 11+ / python3 / GNU tar）
 ```
 
@@ -200,6 +229,14 @@ android/tests/run.sh             # 校验自写的 tar 解压器（需要 JDK 11
 一个可执行文件**，漏掉 `libexec/proot/loader` 会导致容器里什么都执行不了）、架构是否正确、
 两个 loader 是否静态链接、proot 的解释器是否为系统 linker、动态依赖是否都在包里。
 离线运行，不需要网络与 SDK。
+
+`check-llama.sh` 逐项确认随包分发的本地推理引擎：目录内容与仓库里的 vendor 包是否逐个
+对齐（防手工改过或解压不全）、关键文件是否齐全、是否都是 aarch64、是否都是实体文件
+（**APK 的 assets 不保留符号链接**，官方包里的 `libllama.so -> libllama.so.0` 这类链条
+必须先摊平）、动态依赖闭包是否完整（除容器负责提供的系统库外都必须随包）、
+二进制要求的 glibc 版本是否不超过容器自带的 2.39。
+带上 rootfs 路径（`./check-llama.sh /path/to/rootfs`）还能顺带确认那 11 个系统库
+确实存在于容器里。
 
 `run.sh` 用合成 tar.gz 分别喂给 `TarGz` 与系统 `tar`，逐项比对条目、类型、符号链接目标、
 内容摘要、权限位（含 setuid）与硬链接。覆盖 GNU 与 POSIX(pax) 两种打包格式，
@@ -220,7 +257,8 @@ android/tests/run.sh             # 校验自写的 tar 解压器（需要 JDK 11
   `ALLOW_KEY_CHANGE=1 ./build.sh` 临时放行。
 
 当前指纹：`0730afc2e31455e6d94e0950f2b931c93fa491b750fe3b92266c7b5db392d544`
-（v0.1.0 / v0.1.1 / v0.2.0 / v0.2.1 全部一致，可逐版覆盖安装）
+（v0.1.0 / v0.1.1 / v0.2.0 / v0.2.1 / v0.2.2 / v0.2.3 / v0.2.4 / v0.3.0 全部一致，
+可逐版覆盖安装）
 
 ## 人工测试流程
 
@@ -304,8 +342,10 @@ android/tests/run.sh             # 校验自写的 tar 解压器（需要 JDK 11
 | M10 | 自检与就绪提示 | 启动自检报告（依赖 / 目录 / 模型 / 后端 / 端口）、对话页缺少模型时的前置提示、后端自动拉起修复 | `memo_role/selfcheck.py`、`inference/llama_server.py` |
 | M11 | 安卓外壳 APK | 可安装的 WebView 客户端：地址可配、连不上给引导页、补齐文件上传与下载、图标与构建脚本（不依赖 Gradle） | `android/` |
 | M12 | 安卓容器客户端 | 自带 proot 运行时：首次启动下载并解压 Ubuntu rootfs、容器内装依赖、从 GitHub 拉代码、启动服务；原生界面（首页 / 终端 / 界面）+ 日志与进度 | `android/src/`、`android/assets/` |
+| M13 | 安卓与第三方 API 可用 | 管理后台可切 `openai_api` 后端（填地址/模型/多密钥、测连接后立即生效）、可下载模型与从链接导入、文件页窄屏布局修复；修 SmolLM2 下载源 404 | `web/api/models.py`、`inference/downloader.py`、`web/static/admin.html` |
+| M14 | 安卓本地推理引擎 | aarch64 的 `llama-server` 随 APK 分发：裁剪出最小闭包、装进容器 `/usr/local/bin`、bootstrap 补系统库并试跑、状态页显示版本；离线校验脚本 | `android/vendor/`、`android/tools/vendor_llama.py`、`android/tests/check-llama.sh`、`Container.java` |
 
-测试：`python -m pytest`（499 项，全离线运行，不触碰真实推理与网络）。
+测试：`python -m pytest`（536 项，全离线运行，不触碰真实推理与网络）。
 
 安卓侧的离线校验（真机之外的尽调，逐条有据）：
 
@@ -321,6 +361,11 @@ android/tests/run.sh             # 校验自写的 tar 解压器（需要 JDK 11
 | 解压器产出是否与系统 tar 一致 | `android/tests/run.sh`：同一 tar.gz 分别给 `TarGz` 与 GNU tar，逐项比对 | 真实 rootfs 3413 条目零差异；合成包（GNU / pax 两种格式）也全对 |
 | 签名是否可覆盖安装 | 逐版比对 `apksigner verify --print-certs` | v0.1.0 / v0.1.1 / v0.2.0 / v0.2.1 指纹一致 |
 | 代码拉取路径是否正确 | 解析 GitHub tarball 顶层 | 单一顶层目录 `memo-role-main`，与 `fetchProject` 的假设一致 |
+| llama-server 是否齐全可用 | `android/tests/check-llama.sh`（带 rootfs 路径） | 18 个文件与 vendor 包逐个对齐；全是实体文件；依赖闭包完整；最高要求 GLIBC_2.38 ≤ 容器 2.39；11 个系统库在 rootfs 内逐个确认 |
+| llama-server 能否在容器里跑 | 取与 App 同一个 Ubuntu 24.04 rootfs，用 qemu-aarch64 实跑 | `--version` 正常；加载 SmolLM2-135M 后 `/health` 返回 200、`/v1/chat/completions` 生成出真实文本 |
+| 容器里怎么放这套二进制 | 在同一个 rootfs 上分别试「软链」「复制到别的目录」 | 两种都不行：库在同目录靠 `$ORIGIN` 找，而 ggml 是**扫可执行文件所在目录**找那 8 个 CPU 变体（`GGML_BACKEND_PATH` 只能指定单个文件），挪走就报 `no backends are loaded`。所以 /usr/local/bin 放的是一个 `exec` 真身的入口脚本 |
+| proot 能否执行入口脚本 | 读 proot 源码 `src/execve/shebang.c` | `expand_shebang()` 会解析脚本的 shebang 并换成容器内的解释器，脚本可直接执行 |
+| 项目后端能否拉起本地引擎 | 让 `LlamaServerBackend` 自己启动（经 qemu 包装）并连发两次对话 | 启动参数被接受、模型加载完成、`/health` 就绪；随后 400 是测试配置的 `n_ctx` 太小、300s 超时是 qemu 模拟太慢，均与链路无关 |
 
 **APK 仍未在真机或模拟器上运行过** —— 本环境没有 KVM，跑不了模拟器；
 上面这些只能证明「材料齐备且自洽」，不能证明在具体设备上能跑通。
@@ -333,25 +378,29 @@ android/tests/run.sh             # 校验自写的 tar 解压器（需要 JDK 11
 
 1. **真实模型端到端**：环境已具备自检与明确报错（M10），但**尚未在真机上跑过一次真实推理**。下载 GGUF + 准备 llama-server 后按 README「人工测试流程 · 第二轮」走一遍。落点：`inference/`（后端是否有 bug）+ `web/static/app.js`（SSE 展示）。
 2. **安卓容器客户端首次真机验证**：M12 的所有材料都验过、代码也编译通过，但**从未在任何设备上运行**。按「人工测试流程 · 第一轮 · 安卓 App」逐条走。落点：`android/src/`（proot 调用、解压、网络）。
-3. **安卓上的推理后端**：容器是 glibc 的 Ubuntu，需要 aarch64 的 `llama-server`。两条路可选 —— 交叉编译一份 glibc 版随 APK 分发，或在容器内 `apt build-essential cmake` 后就地编译（慢，但不需要额外的构建环境）。落点：`android/assets/` + `Container.java` 的启动逻辑。
+3. **安卓上的本地模型端到端**：`llama-server` 已随 APK 分发并在 qemu + 同款 rootfs 上
+   跑通推理（M14），但**尚未在真机上跑过一次**。手机上按「人工测试流程 · 第二轮」走。
+   落点：`android/assets/bootstrap.sh`（系统库是否齐全）+ `Container.java`（安装与状态）。
 4. **服务保活**：目前服务随 App 进程存活，切后台被回收就断。改用前台服务 + 常驻通知。落点：`android/src/`（新增 Service 组件 + 通知渠道，注意 Android 13+ 要 `POST_NOTIFICATIONS`）。
 5. **NapCat 联调**：`napcat.enabled: true` 后真实收发 QQ 消息，验证 @ 识别、群里 `/persona` 切换绑定、群聊标签前缀。落点：`adapters/napcat.py`。
+6. **手机上的推理速度**：手机上只有 CPU、线程数默认 2，135M 之外的模型可能很慢。
+   需要真机实测后再决定默认 `n_ctx` / `n_threads` / 量化档位，必要时在管理后台暴露。落点：`inference/` + `web/static/admin.html`。
 
 **P1 — 功能补全**
 
-6. **对话页**：消息分页（现在一次最多取 100 条）、会话导出为 Markdown / JSON。落点：`web/api/dialogue.py` + `static/app.js`。
-7. **人设**：头像支持上传图片到沙箱（现在只能是 emoji 或手填 URL）。落点：`web/api/files.py` 复用上传 + 人设表单。
-8. **记忆**：管理后台支持手动新增记忆（现在只能改 / 删）。落点：`web/api/memories.py` 需补 `POST`。
-9. **模型**：Web 端触发 GGUF 下载与校验（现在只显示「未下载」；内置下载源未核实，见「安装与启动」第 3 步）。落点：`inference/registry.py` + `web/api/models.py`。
-10. **文件页**：图片与文本预览、批量选择删除；表单从 `window.prompt` 换成弹窗，与其它页面风格统一。落点：`static/files.html`。
-11. **安卓文件页**：目前「文件」只能通过网页界面看，App 内还没有原生文件浏览器。落点：`android/src/`（新增面板，读沙箱根目录）。
+7. **对话页**：消息分页（现在一次最多取 100 条）、会话导出为 Markdown / JSON。落点：`web/api/dialogue.py` + `static/app.js`。
+8. **人设**：头像支持上传图片到沙箱（现在只能是 emoji 或手填 URL）。落点：`web/api/files.py` 复用上传 + 人设表单。
+9. **记忆**：管理后台支持手动新增记忆（现在只能改 / 删）。落点：`web/api/memories.py` 需补 `POST`。
+10. **模型下载的校验与对齐**：现在只校验 HTTP 状态与大小，没有校验哈希；下载中断只能重下（无断点续传）。落点：`inference/downloader.py` + `catalog.py` 补 sha256。
+11. **文件页**：图片与文本预览、批量选择删除；表单从 `window.prompt` 换成弹窗，与其它页面风格统一。落点：`static/files.html`。
+12. **安卓文件页**：目前「文件」只能通过网页界面看，App 内还没有原生文件浏览器。落点：`android/src/`（新增面板，读沙箱根目录）。
 
 **P2 — 工程化与安全**
 
-12. **部署脚本**：README 的安装 / 启动章节已补（M10），Termux 与 Windows 的一键启动脚本仍缺（`scripts/` 目录不存在）。
-13. **CI**：仓库暂无 `.github/`，补 GitHub Actions 跑 pytest + ruff。
-14. **访问控制**：Web 层**没有任何鉴权**。服务监听 127.0.0.1 时只有本机可访问（安卓客户端正是这么做的）；但用 `--host 0.0.0.0` 时同网段任何人都能访问文件管理页（等于远程文件读写），长期暴露必须先加访问口令。
-15. **可观测性**：后台日志目前只读文件尾部，考虑请求级日志与错误聚合。
+13. **部署脚本**：README 的安装 / 启动章节已补（M10），Termux 与 Windows 的一键启动脚本仍缺（`scripts/` 目录不存在）。
+14. **CI**：仓库暂无 `.github/`，补 GitHub Actions 跑 pytest + ruff。
+15. **访问控制**：Web 层**没有任何鉴权**。服务监听 127.0.0.1 时只有本机可访问（安卓客户端正是这么做的）；但用 `--host 0.0.0.0` 时同网段任何人都能访问文件管理页（等于远程文件读写），长期暴露必须先加访问口令。
+16. **可观测性**：后台日志目前只读文件尾部，考虑请求级日志与错误聚合。
 
 ### 已知取舍（有意为之，不要「顺手优化」）
 
