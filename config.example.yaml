@@ -26,6 +26,7 @@ memory:
   min_importance: 0.2      # 低于该重要度的信息不写入
   embedding_backend: hashing   # hashing | llama_server | openai
   embedding_dim: 256           # 仅 hashing 后端生效
+  embedding_model: ""          # llama_server 留空=用已加载模型；openai 需显式指定
   extractor: rule              # rule | llm
 
 # ----------------------------------------------------------------------
@@ -67,6 +68,16 @@ persona:
   default_persona: default
 
 # ----------------------------------------------------------------------
+# 对话调度（群聊何时回复）
+# ----------------------------------------------------------------------
+dialogue:
+  group_reply_probability: 0.15   # 群聊未被 @ 时的随机接话概率（0 = 只在被叫到时回）
+  group_reply_when_mentioned: true  # 被 @ / 叫到名字时必定回复
+  command_prefixes: ["/"]         # 以此开头必定回复，前缀会从文本剥离
+  label_group_speakers: true      # 群聊上下文给发言加「昵称：」前缀
+  history_limit: 0                # 0 = 沿用 memory.working_window
+
+# ----------------------------------------------------------------------
 # 日志
 # ----------------------------------------------------------------------
 logging:
@@ -82,5 +93,6 @@ napcat:
   enabled: false
   ws_path: /onebot/v11/ws
   access_token: ""          # 建议与 NapCat 侧保持一致
-  persona: default
-  admins: []
+  persona: default          # 会话未绑定人设时的初始人设；群里用 /persona 切换的绑定不会被覆盖
+  bot_names: []             # 机器人在群里的称呼，用于识别「直接叫名字」的消息（默认人设名自动加入）
+  admins: []                # 管理员 QQ 号

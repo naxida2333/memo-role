@@ -64,8 +64,10 @@ class MemoryConfig:
     min_importance: float = 0.2
     # 向量后端：hashing | llama_server | openai
     embedding_backend: str = "hashing"
-    # 向量维度（hashing 后端生效；其它后端以模型实际输出为准）
+    # 向量维度（仅 hashing 后端生效；其它后端以模型实际输出为准）
     embedding_dim: int = 256
+    # embedding 模型名；llama_server 留空表示使用其已加载的模型，openai 需显式指定
+    embedding_model: str = ""
     # 记忆提取器：rule | llm
     extractor: str = "rule"
 
@@ -133,6 +135,26 @@ class PersonaConfig:
 
 
 @dataclass
+class DialogueConfig:
+    """对话调度配置。
+
+    群聊里机器人不能「有消息就回」——既扰民也浪费低配设备的算力，
+    因此这里集中定义「什么时候该回复」的策略。
+    """
+
+    # 群聊未 @ 机器人时的随机回复概率（0~1）；设为 0 表示只回应被叫到的话
+    group_reply_probability: float = 0.15
+    # 被 @ 或被叫到名字时是否必定回复
+    group_reply_when_mentioned: bool = True
+    # 指令前缀：消息以此开头时必定回复（前缀本身会从文本中剥离）
+    command_prefixes: List[str] = field(default_factory=lambda: ["/"])
+    # 群聊上下文是否给每条发言加「昵称：」前缀，帮助模型区分发言人
+    label_group_speakers: bool = True
+    # 注入的历史消息条数上限；0 表示沿用 memory.working_window
+    history_limit: int = 0
+
+
+@dataclass
 class LoggingConfig:
     """日志配置。"""
 
@@ -155,6 +177,8 @@ class NapCatConfig:
     access_token: str = ""
     # 默认使用的人设 id
     persona: str = "default"
+    # 机器人在群里的称呼（除默认人设名外，用于识别纯文本里「叫名字」的消息）
+    bot_names: List[str] = field(default_factory=list)
     # 管理员 QQ 号列表（可执行管理指令）
     admins: List[str] = field(default_factory=list)
 
@@ -172,6 +196,7 @@ class AppConfig:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     inference: InferenceConfig = field(default_factory=InferenceConfig)
     persona: PersonaConfig = field(default_factory=PersonaConfig)
+    dialogue: DialogueConfig = field(default_factory=DialogueConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     napcat: NapCatConfig = field(default_factory=NapCatConfig)
 
