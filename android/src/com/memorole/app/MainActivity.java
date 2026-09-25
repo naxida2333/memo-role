@@ -54,6 +54,7 @@ public class MainActivity extends Activity {
     private TextView statusPill;
     private TextView homeStatus;
     private TextView homeLog;
+    private android.widget.ScrollView homeLogScroll;
     private TextView progressText;
     private ProgressBar progress;
     private Button btnSetup;
@@ -105,6 +106,13 @@ public class MainActivity extends Activity {
         statusPill = findViewById(R.id.status_pill);
         homeStatus = findViewById(R.id.home_status);
         homeLog = findViewById(R.id.home_log);
+        homeLogScroll = findViewById(R.id.home_log_scroll);
+        // 日志框是首页那个 ScrollView 里嵌套的小滚动区：不声明「别抢我的触摸事件」，
+        // 手指一划就会被外层 ScrollView 截走，框内根本滚不动。
+        homeLogScroll.setOnTouchListener((v, e) -> {
+            v.getParent().requestDisallowInterceptTouchEvent(true);
+            return false;
+        });
         progressText = findViewById(R.id.home_progress_text);
         progress = findViewById(R.id.home_progress);
         btnSetup = findViewById(R.id.btn_setup);
@@ -141,7 +149,7 @@ public class MainActivity extends Activity {
 
     private void runSetup() {
         if (container.isReady()) {
-            log("环境已就绪，无需重复初始化。若要更新代码，请用「设置」里的重置。");
+            log("环境已就绪，无需重复初始化。要更新代码请用「设置 → 更新代码」。");
             startService();
             return;
         }
@@ -330,7 +338,14 @@ public class MainActivity extends Activity {
         repoInput.setText(container.repoUrl());
         box.addView(repoInput);
 
-        new AlertDialog.Builder(this)
+        // 代码更新：前端与后端逻辑都在容器里的项目目录中，改完只拉代码即可，
+        // 不必为一次改动重装整个容器（那要重下 30MB 容器 + 150MB 依赖）。
+        final Button updateBtn = new Button(this);
+        updateBtn.setText(R.string.action_update_code);
+        updateBtn.setPadding(0, pad / 2, 0, 0);
+        box.addView(updateBtn);
+
+        final AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(R.string.settings_title)
                 .setView(box)
                 .setPositiveButton(R.string.action_save, (d, w) -> {
@@ -349,7 +364,47 @@ public class MainActivity extends Activity {
                 })
                 .setNeutralButton(R.string.action_reset, (d, w) -> confirmReset())
                 .setNegativeButton(R.string.action_cancel, null)
-                .show();
+                .create();
+        updateBtn.setOnClickListener(v -> {
+            dialog.dismiss();
+            updateCode();
+        });
+        dialog.show();
+    }
+
+    /** 只更新容器里的项目代码，不动容器本身与用户数据（模型、配置、聊天记录）。 */
+    private void updateCode() {
+        showPanel(0);
+        if (!container.isProjectReady()) {
+            log("容器里还没有项目代码，请先在首页点「一键初始化」。");
+            return;
+        }
+        log("开始更新代码（只覆盖代码文件，模型与聊天数据不动）。");
+        showBusy(true);
+        worker.execute(() -> {
+            boolean wasRunning = container.isServiceRunning();
+            try {
+                container.updateProject(containerProgress());
+                log("代码已更新到最新。");
+                if (wasRunning) {
+                    log("重启服务以生效…");
+                    container.stopService();
+                }
+                ui.post(() -> {
+                    showBusy(false);
+                    refreshStatus();
+                    if (wasRunning) {
+                        startService();
+                    }
+                });
+            } catch (Exception e) {
+                log("更新失败：" + e.getMessage());
+                ui.post(() -> {
+                    showBusy(false);
+                    refreshStatus();
+                });
+            }
+        });
     }
 
     private void confirmReset() {
@@ -408,6 +463,8 @@ public class MainActivity extends Activity {
                 next = sb.toString();
             }
             homeLog.setText(next);
+            // 日志框高度固定，新行要自己滚到底，否则用户看到的还是最早那几行
+            homeLogScroll.post(() -> homeLogScroll.scrollTo(0, homeLog.getBottom()));
         });
     }
 

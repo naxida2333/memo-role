@@ -45,12 +45,28 @@
     document.getElementById('nav').innerHTML = MR.headerNav('/');
 
     bindEvents();
+    syncPlaceholder();
     renderEmpty();
 
     // 基础数据并行加载；任一失败只提示，不阻塞页面
     await Promise.all([loadPersonas(), loadModels(), loadCommands()]);
     await loadSessions();
     restoreLast();
+  }
+
+  /**
+   * 窄屏下输入框里的完整提示会折成两行、把底栏整体撑高，
+   * 这里换成一行版；桌面端保留 Enter / Shift+Enter 的说明。
+   */
+  function syncPlaceholder() {
+    var narrow = window.matchMedia('(max-width: 720px)');
+    var apply = function () {
+      els.input.placeholder = narrow.matches
+        ? '说点什么…'
+        : '说点什么…（Enter 发送，Shift+Enter 换行）';
+    };
+    apply();
+    if (narrow.addEventListener) narrow.addEventListener('change', apply);
   }
 
   function bindEvents() {
@@ -113,8 +129,8 @@
     var ready = state.models.filter(function (m) { return m.downloaded; });
     if (ready.length) { el.hidden = true; return; }
     el.hidden = false;
-    el.innerHTML = '还没有下载任何模型，<b>真实聊天会失败</b>（指令、人设、记忆、文件管理不受影响）。' +
-      '请把 GGUF 放到模型目录后，在<a href="/admin">管理后台 · 模型</a>里设为默认。';
+    el.innerHTML = '还没有可用模型，<b>真实聊天会失败</b>（指令、人设、记忆、文件管理照常）。' +
+      '请把 GGUF 放进模型目录，再到<a href="/admin">管理后台 · 模型</a>设为默认。';
   }
 
   async function loadCommands() {
@@ -368,10 +384,20 @@
     renderSelects();
   }
 
+  /**
+   * 指令条只显示命令本身（/persona），参数放进 title 与点击后的输入框：
+   * 完整的 `/persona [人设id|list]` 在窄屏上会折成两三行，把消息区挤没。
+   */
+  function commandHead(usage) {
+    return String(usage || '').split(/[\s\[]+/)[0];
+  }
+
   function renderChips() {
     var html = state.commands.map(function (c) {
+      var head = commandHead(c.usage);
+      var tip = c.usage + (c.description ? '  ' + c.description : '');
       return '<button class="chip" data-usage="' + MR.escape(c.usage) + '" title="' +
-        MR.escape(c.description || '') + '">' + MR.escape(c.usage) + '</button>';
+        MR.escape(tip) + '">' + MR.escape(head) + '</button>';
     });
     html.push('<button class="chip chip-help" data-help="1" title="查看全部指令">帮助</button>');
     els.chips.innerHTML = html.join('');
@@ -699,7 +725,7 @@
     var chip = e.target.closest('[data-usage]');
     if (!chip) return;
     var usage = chip.getAttribute('data-usage') || '';
-    var head = usage.split(/[\s\[]+/)[0];
+    var head = commandHead(usage);
     if (head === usage.trim()) {
       sendMessage(usage.trim(), { showBubbles: true }); // 无参数指令直接发送
     } else {

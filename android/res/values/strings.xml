@@ -37,6 +37,7 @@
     <string name="settings_title">设置</string>
     <string name="settings_port">服务端口</string>
     <string name="settings_repo">代码来源（GitHub tarball 地址）</string>
+    <string name="action_update_code">更新代码（只拉取最新代码，不动容器与数据）</string>
     <string name="reset_confirm">将删除已下载的容器与项目代码（模型与数据若在容器内也会一并删除）。确定继续？</string>
 
     <!-- 网页面板 -->

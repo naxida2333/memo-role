@@ -8,6 +8,7 @@ import android.system.Os;
 
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -353,18 +354,46 @@ public class Container {
 
     public void fetchProject(final Progress progress) throws IOException {
         File archive = new File(cacheDir, "project.tar.gz");
+        File unpacked = downloadAndUnpack(archive, progress);
+        File home = new File(rootfs, "root");
+        home.mkdirs();
+        deleteRecursively(projectDir);
+        if (!unpacked.renameTo(projectDir)) {
+            throw new IOException("无法移动到：" + projectDir);
+        }
+        cleanStaging();
+        archive.delete();
+    }
+
+    /**
+     * 只更新代码：重新拉一份仓库代码，覆盖进已有项目目录。
+     *
+     * <p><b>为什么不直接复用 {@link #fetchProject}</b>：那个是「先删后解」，
+     * 而 models/、data/、config.yaml 这些用户数据都躺在项目目录里，全在
+     * .gitignore 里、不在 tarball 中。照那个路子更新一次，模型和聊天记录就没了。
+     * 这里是覆盖式合并：包里有同名的文件被替换，没有的原样留着。
+     */
+    public void updateProject(final Progress progress) throws IOException {
+        if (!isProjectReady()) {
+            throw new IOException("容器里还没有项目代码，请先在首页做一次「一键初始化」");
+        }
+        File archive = new File(cacheDir, "project.tar.gz");
+        File unpacked = downloadAndUnpack(archive, progress);
+        copyTree(unpacked, projectDir);
+        cleanStaging();
+        archive.delete();
+    }
+
+    /** 下载项目 tarball 并解压，返回解压出来的唯一顶层目录。 */
+    private File downloadAndUnpack(File archive, final Progress progress) throws IOException {
         Net.download(repoUrl(), archive, new Net.Progress() {
             @Override
             public void onProgress(long done, long total) {
                 progress.progress("下载项目代码", done, total);
             }
         });
-        File home = new File(rootfs, "root");
-        home.mkdirs();
-        deleteRecursively(projectDir);
-        // GitHub 的 tarball 顶层是「仓库名-分支名」一层目录，用 target 再套一层伪装：
-        // 解到 projectDir 的父目录，再把唯一的子目录改名成 memo-role。
-        File staging = new File(home, ".unpack");
+        // GitHub 的 tarball 顶层是「仓库名-分支名」一层目录，多解一层再自己摆正
+        File staging = stagingDir();
         deleteRecursively(staging);
         staging.mkdirs();
         TarGz.extract(archive, staging, new TarGz.Progress() {
@@ -377,11 +406,44 @@ public class Container {
         if (children == null || children.length != 1 || !children[0].isDirectory()) {
             throw new IOException("项目包结构异常：解压后不是单个目录");
         }
-        if (!children[0].renameTo(projectDir)) {
-            throw new IOException("无法移动到：" + projectDir);
+        return children[0];
+    }
+
+    private File stagingDir() {
+        return new File(cacheDir, "unpack");
+    }
+
+    private void cleanStaging() {
+        deleteRecursively(stagingDir());
+    }
+
+    /** 递归把 src 的内容合并进 dst，同名文件覆盖、同名目录递归。 */
+    private static void copyTree(File src, File dst) throws IOException {
+        if (src.isDirectory()) {
+            File[] children = src.listFiles();
+            if (children == null) {
+                return;
+            }
+            if (!dst.isDirectory() && !dst.mkdirs()) {
+                throw new IOException("无法创建目录：" + dst);
+            }
+            for (File child : children) {
+                copyTree(child, new File(dst, child.getName()));
+            }
+            return;
         }
-        deleteRecursively(staging);
-        archive.delete();
+        File parent = dst.getParentFile();
+        if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+            throw new IOException("无法创建目录：" + parent);
+        }
+        try (InputStream in = new FileInputStream(src);
+             OutputStream out = new FileOutputStream(dst)) {
+            byte[] buf = new byte[1 << 16];
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                out.write(buf, 0, n);
+            }
+        }
     }
 
     // ------------------------------------------------------------------
