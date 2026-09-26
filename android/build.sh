@@ -29,8 +29,8 @@ MIN_SDK="${MIN_SDK:-24}"
 # 代价：无法上架 Google Play（那里要求更高的 targetSdk），只能侧载安装；
 # 但 Android 只拒绝 targetSdk < 23 的应用，28 在 Android 14/15 上可正常安装。
 TARGET_SDK="${TARGET_SDK:-28}"
-VERSION_CODE="${VERSION_CODE:-10}"
-VERSION_NAME="${VERSION_NAME:-0.3.2}"
+VERSION_CODE="${VERSION_CODE:-11}"
+VERSION_NAME="${VERSION_NAME:-0.3.3}"
 JAVA_RELEASE="${JAVA_RELEASE:-11}"
 
 BT="$SDK/build-tools/$BUILD_TOOLS"
@@ -107,6 +107,9 @@ rm -rf assets/llama
 mkdir -p assets/llama
 tar -xzf "$VENDOR_TARBALL" -C assets/llama
 bash tests/check-llama.sh
+# 初始化脚本本身也校验：它的第 3 步（补齐系统库）判断失误过一次真机安装，
+# 而那是整个流程里最贵的一步（失败=容器装不起来）
+bash tests/check-bootstrap.sh
 
 rm -rf "$BUILD"
 mkdir -p "$BUILD/res" "$BUILD/classes" "$BUILD/gen" "$BUILD/dex" "$DIST"

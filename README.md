@@ -142,6 +142,11 @@ python -m memo_role --reload             # 开发用热重载
 第 5 步与第 7 步末尾的试跑都是为了把「漏文件 / 缺库」当场写在日志里，
 而不是等到第一次聊天才报错。
 
+第 7 步里「补齐系统库」是**尽力而为**：某一样装不上只警告、不中断初始化
+（缺的库只影响本地模型，第三方 API 那条路不依赖本地库）。结束时会把
+`llama-server --version` 的试跑结果落盘，首页状态据此显示「已就绪」还是
+「已装入但起不来」—— 文件齐不等于跑得起来，缺一个 `libgomp.so.1` 就是这样。
+
 建议留出 2 GB 以上存储空间（容器 + 依赖 + 后续模型）。
 
 > 从 0.2.x 升上来时容器和代码都还在，点一次「一键初始化」即可：已做过的步骤会自动
@@ -185,7 +190,7 @@ Android 本身只拒绝 targetSdk < 23 的应用，28 在 Android 14/15 上可�
 ### 安装
 
 拷到手机点击安装（需允许「安装未知来源应用」），或
-`adb install -r android/dist/memo-role-0.3.2.apk`。
+`adb install -r android/dist/memo-role-0.3.3.apk`。
 
 ### 重新构建
 
@@ -232,6 +237,7 @@ python3 tools/vendor_llama.py --archive /path/to/llama-b11191-bin-ubuntu-arm64.t
 android/tests/check-runtime.sh   # 校验 proot 运行时是否齐全、形态是否能在安卓上跑
 android/tests/check-llama.sh     # 校验 llama-server 与它的 .so 是否齐全、能不能在容器里加载
 android/tests/check-service-supervision.sh   # 校验「清理残留服务」的 pattern 既不漏杀也不误杀
+android/tests/check-bootstrap.sh # 校验初始化的「补齐系统库」：判断得准、失败不带崩整体
 android/tests/run.sh             # 校验自写的 tar 解压器（需要 JDK 11+ / python3 / GNU tar）
 ```
 
@@ -254,6 +260,12 @@ pattern**（而不是另抄一份），再拿它去比对真实的服务命令�
 写死裸 pattern（`memo-role`）会连自己一起杀掉 —— 这个坑实测踩过，
 而这种「清理失败 / 自杀」在手机上只会表现为「服务起不来」，很难查，所以用脚本钉住。
 
+`check-bootstrap.sh` 从 `bootstrap.sh` 里**取出真实的 `have_lib` / `ensure_lib` 与自检块**
+（不另抄一份），配上假的 `ldconfig` / `apt-get` 跑：链接器认账时不该去装；真装不上时只警告、
+不能把脚本带走；自检的三种结果（ok / fail / 二进制不在）落盘要各自正确。
+真机踩过的地方：proot 下按路径 `ls` 判断「库在不在」会误判成「装不上」，
+而那个返回值又被 `set -e` 放大成整个初始化失败 —— 一个可选库把容器装崩了。
+
 `run.sh` 用合成 tar.gz 分别喂给 `TarGz` 与系统 `tar`，逐项比对条目、类型、符号链接目标、
 内容摘要、权限位（含 setuid）与硬链接。覆盖 GNU 与 POSIX(pax) 两种打包格式，
 以及超长路径、二进制内容、空文件等边界 —— 解压是初始化流程的第 3 步，
@@ -273,8 +285,8 @@ pattern**（而不是另抄一份），再拿它去比对真实的服务命令�
   `ALLOW_KEY_CHANGE=1 ./build.sh` 临时放行。
 
 当前指纹：`0730afc2e31455e6d94e0950f2b931c93fa491b750fe3b92266c7b5db392d544`
-（v0.1.0 / v0.1.1 / v0.2.0 / v0.2.1 / v0.2.2 / v0.2.3 / v0.2.4 / v0.3.0 / v0.3.1 / v0.3.2
-全部一致，可逐版覆盖安装）
+（v0.1.0 / v0.1.1 / v0.2.0 / v0.2.1 / v0.2.2 / v0.2.3 / v0.2.4 / v0.3.0 / v0.3.1 / v0.3.2 /
+v0.3.3 全部一致，可逐版覆盖安装）
 
 ## 人工测试流程
 

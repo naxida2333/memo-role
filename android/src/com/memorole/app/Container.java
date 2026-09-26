@@ -65,8 +65,13 @@ public class Container {
      * 用户升级 APK 时旧容器还在，只看「标记文件是否存在」会直接跳过，
      * 新增的依赖（比如本地推理引擎要的 libgomp1）就永远装不上。
      * 版本号变了就重跑一遍 bootstrap —— apt 与 pip 都是幂等的，缺什么补什么。
+     *
+     * <p>v3 没加依赖，改的是「怎么判断库在不在」：v2 用 {@code ls} 探测，在 proot
+     * 下会误判成「装不上」，还会被 {@code set -e} 放大成整个初始化失败
+     * （详见 bootstrap.sh 里 have_lib / ensure_lib 的说明）。已经装过的容器也该
+     * 重跑一次，把 <em>自检结果</em> 落盘。
      */
-    private static final int BOOTSTRAP_VERSION = 2;
+    private static final int BOOTSTRAP_VERSION = 3;
     private static final String BOOTSTRAP_MARKER = "root/.bootstrap-done";
 
     /** 本地推理引擎（llama.cpp）在容器里的安装位置。 */
@@ -354,6 +359,17 @@ public class Container {
         return readText(new File(rootfs, LLAMA_DIR + "/VERSION")).trim();
     }
 
+    /**
+     * 初始化时对 llama-server 的自检结果（bootstrap.sh 写在 SELFTEST 里）。
+     *
+     * <p>文件齐 ≠ 能跑：缺 libgomp 这类系统库时二进制都在，一启动却只报
+     * {@code error while loading shared libraries}。所以状态栏要读这份自检，
+     * 而不是只看文件在不在。没跑过自检（老容器）返回空串。
+     */
+    public String llamaSelfTest() {
+        return readText(new File(rootfs, LLAMA_DIR + "/SELFTEST")).trim();
+    }
+
     // ------------------------------------------------------------------
     // 二、下载并解压容器
     // ------------------------------------------------------------------
@@ -452,9 +468,16 @@ public class Container {
         }
         String codename = readCodename();
         StringBuilder sb = new StringBuilder();
-        for (String comp : new String[]{"main", "universe", "restricted", "multiverse"}) {
-            sb.append("deb http://ports.ubuntu.com/ubuntu-ports ").append(codename)
-                    .append(' ').append(comp).append('\n');
+        // -updates / -security 不能省：镜像里自带的包（libc6、gcc-14-base 之类）就是
+        // 这两个口袋的版本，只挂 release 口袋的话 apt 会看到更旧的候选，而它们彼此
+        // 之间版本是**精确钉死**的（libgomp1 要求 gcc-14-base 等于同一个版本），
+        // 于是「装 libgomp1」变成「要降级 gcc-14-base」，apt 直接拒绝安装。
+        for (String suite : new String[]{
+                codename, codename + "-updates", codename + "-security"}) {
+            for (String comp : new String[]{"main", "universe", "restricted", "multiverse"}) {
+                sb.append("deb http://ports.ubuntu.com/ubuntu-ports ").append(suite)
+                        .append(' ').append(comp).append('\n');
+            }
         }
         writeText(list, sb.toString());
     }
@@ -931,11 +954,18 @@ public class Container {
                 .append(isBootstrapCurrent() ? "已安装" : "未安装")
                 .append('\n');
         String llama = installedLlamaVersion();
-        sb.append("本地推理引擎：")
-                .append(llama.isEmpty()
-                        ? "未安装（本地模型不可用；仍可在管理后台切第三方 API）"
-                        : "llama-server " + llama + " 已就绪")
-                .append('\n');
+        sb.append("本地推理引擎：");
+        if (llama.isEmpty()) {
+            sb.append("未安装（本地模型不可用；仍可在管理后台切第三方 API）");
+        } else if (llamaSelfTest().startsWith("fail")) {
+            // 文件都在但起不来（典型：系统库没装上）。不写清楚的话，用户会以为
+            // 界面上写着「已就绪」就该能跑，转头去怀疑模型文件。
+            sb.append("llama-server ").append(llama).append(" 已装入，但初始化自检起不来，")
+                    .append("本地模型不可用（第三方 API 不受影响）");
+        } else {
+            sb.append("llama-server ").append(llama).append(" 已就绪");
+        }
+        sb.append('\n');
         sb.append("服务：").append(isServiceRunning() ? "运行中" : "未运行").append('\n');
         // 端口有人应答却不是本 App 起的：多半是上次留下的旧服务，界面看着正常、
         // 实际跑的是旧代码（点接口报 Not Found）。这里必须说出来，否则无从判断。
